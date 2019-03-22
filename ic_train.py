@@ -4,7 +4,6 @@ import argparse
 import pathlib
 
 import albumentations as A
-import numpy as np
 import sklearn.metrics
 
 import pytoolkit as tk
@@ -18,16 +17,17 @@ def _main():
     parser.add_argument('mode', default='train', choices=('check', 'train'), nargs='?')
     parser.add_argument('--data', default='imagenette', choices=('imagenette',))
     parser.add_argument('--data-dir', default=pathlib.Path('data'), type=pathlib.Path)
-    parser.add_argument('--models-dir', default=pathlib.Path('models'), type=pathlib.Path)
+    parser.add_argument('--models-dir', default=pathlib.Path('models/ic'), type=pathlib.Path)
     args = parser.parse_args()
     with tk.dl.session(use_horovod=True):
-        tk.log.init(args.models_dir / 'ic' / 'train.log')
+        tk.log.init(args.models_dir / 'train.log')
         {
             'check': _check,
             'train': _train,
         }[args.mode](args)
 
 
+@tk.log.trace()
 def _check(args):
     _ = args
     num_classes = 10
@@ -36,27 +36,27 @@ def _check(args):
     model.summary()
 
 
+@tk.log.trace()
 def _train(args):
-    (X_train, y_train), (X_val, y_val), class_names = _load_data(args.data_dir, args.data)
-    num_classes = len(class_names)
-
     input_shape = (320, 320, 3)
     epochs = 1800
     batch_size = 16
     base_lr = 1e-3 * batch_size * tk.hvd.get().size()
 
+    (X_train, y_train), (X_val, y_val), class_names = _load_data(args.data_dir, args.data)
+    num_classes = len(class_names)
     train_dataset = MyDataset(X_train, y_train, input_shape, num_classes, data_augmentation=True)
     val_dataset = MyDataset(X_val, y_val, input_shape, num_classes)
-    train_data = tk.data.DataLoader(train_dataset, batch_size, mp_size=tk.hvd.get().size(), shuffle=True, mixup=True)
+    train_data = tk.data.DataLoader(train_dataset, batch_size, shuffle=True, mixup=True, mp_size=tk.hvd.get().size())
     val_data = tk.data.DataLoader(val_dataset, batch_size * 2)
 
     model = _create_network(input_shape, num_classes)
-    optimizer = tk.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
+    optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True)
     optimizer = tk.hvd.get().DistributedOptimizer(optimizer, compression=tk.hvd.get().Compression.fp16)
-    model.compile(optimizer, 'categorical_crossentropy')
+    model.compile(optimizer, 'categorical_crossentropy', ['acc'])
+    model.summary(print_fn=logger.info if tk.hvd.is_master() else lambda x: x)
     if tk.hvd.is_master():
-        model.summary(print_fn=logger.info)
-        tk.keras.utils.plot_model(model, args.models_dir / 'ic' / 'model.svg', show_shapes=True)
+        tk.keras.utils.plot_model(model, args.models_dir / 'model.svg', show_shapes=True)
 
     callbacks = [
         tk.callbacks.CosineAnnealing(),
@@ -72,7 +72,7 @@ def _train(args):
         logger.info(f'Validation Accuracy:      {sklearn.metrics.accuracy_score(y_val, pred_val.argmax(axis=-1)):.3f}')
         logger.info(f'Validation Cross Entropy: {sklearn.metrics.log_loss(y_val, pred_val):.3f}')
         # 後で何かしたくなった時のために一応保存
-        model.save(args.models_dir / 'ic' / 'model.h5', include_optimizer=False)
+        model.save(args.models_dir / 'model.h5', include_optimizer=False)
 
 
 def _load_data(data_dir, data):
@@ -87,6 +87,7 @@ def _load_data(data_dir, data):
 def _create_network(input_shape, num_classes):
     """ネットワークを作成して返す。"""
     inputs = x = tk.keras.layers.Input(input_shape)
+    x = tk.layers.Preprocess(mode='tf')(x)
     x = _conv2d(64, 7, strides=2)(x)  # 160
     x = _conv2d(128, strides=2, use_act=False)(x)  # 80
     x = _blocks(128, 2)(x)
@@ -158,9 +159,8 @@ class MyDataset(tk.data.Dataset):
 
     def __getitem__(self, index):
         X = tk.ndimage.load(self.X[index])
-        y = tk.keras.utils.to_categorical(self.y[index], self.num_classes)
         X = self.aug(image=X)['image']
-        X = X.astype(np.float32) / 127.5 - 1
+        y = tk.keras.utils.to_categorical(self.y[index], self.num_classes)
         return X, y
 
 
