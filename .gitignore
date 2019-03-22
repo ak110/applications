@@ -1,3 +1,8 @@
+# データ置き場
+data
+data/
+models/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
