@@ -4,6 +4,7 @@ import argparse
 import pathlib
 
 import albumentations as A
+import cv2
 import numpy as np
 import sklearn.metrics
 
@@ -94,8 +95,8 @@ def _create_network(input_shape, num_classes):
     x = _blocks(512, 8)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(num_classes, activation='softmax',
-                              kernel_regularizer=tk.keras.regularizers.l2(1e-4),
-                              bias_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+                              kernel_regularizer=tk.keras.regularizers.l2(1e-5),
+                              bias_regularizer=tk.keras.regularizers.l2(1e-5))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
     return model
 
@@ -117,7 +118,7 @@ def _conv2d(filters, kernel_size=3, strides=1, use_act=True):
         x = tk.keras.layers.Conv2D(filters, kernel_size=kernel_size, strides=strides,
                                    padding='same', use_bias=False,
                                    kernel_initializer='he_uniform',
-                                   kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+                                   kernel_regularizer=tk.keras.regularizers.l2(1e-5))(x)
         x = _bn_act(use_act=use_act)(x)
         return x
     return layers
@@ -125,7 +126,7 @@ def _conv2d(filters, kernel_size=3, strides=1, use_act=True):
 
 def _bn_act(use_act=True):
     def layers(x):
-        x = tk.layers.GroupNormalization(gamma_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        x = tk.layers.GroupNormalization(gamma_regularizer=tk.keras.regularizers.l2(1e-5))(x)
         x = tk.layers.MixFeat()(x)
         x = tk.keras.layers.Activation('relu')(x) if use_act else x
         return x

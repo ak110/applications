@@ -74,10 +74,10 @@ def _train(args):
         model.save(args.models_dir / 'model.h5', include_optimizer=False)
 
 
-def _load_data(data_dir, data):
+def _load_data(data_dir):
     """データの読み込み。"""
-    class_names, X_train, y_train = tk.ml.listup_classification(data_dir / data / 'train')
-    _, X_val, y_val = tk.ml.listup_classification(data_dir / data / 'val', class_names=class_names)
+    class_names, X_train, y_train = tk.ml.listup_classification(data_dir / 'train')
+    _, X_val, y_val = tk.ml.listup_classification(data_dir / 'val', class_names=class_names)
 
     # trainとvalを逆にしちゃう。
     (X_train, y_train), (X_val, y_val) = (X_val, y_val), (X_train, y_train)
@@ -100,8 +100,8 @@ def _create_network(input_shape, num_classes):
     x = _blocks(512, 4)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(num_classes, activation='softmax',
-                              kernel_regularizer=tk.keras.regularizers.l2(1e-4),
-                              bias_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+                              kernel_regularizer=tk.keras.regularizers.l2(1e-5),
+                              bias_regularizer=tk.keras.regularizers.l2(1e-5))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
     return model
 
@@ -123,7 +123,7 @@ def _conv2d(filters, kernel_size=3, strides=1, use_act=True):
         x = tk.keras.layers.Conv2D(filters, kernel_size=kernel_size, strides=strides,
                                    padding='same', use_bias=False,
                                    kernel_initializer='he_uniform',
-                                   kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+                                   kernel_regularizer=tk.keras.regularizers.l2(1e-5))(x)
         x = _bn_act(use_act=use_act)(x)
         return x
     return layers
@@ -131,7 +131,7 @@ def _conv2d(filters, kernel_size=3, strides=1, use_act=True):
 
 def _bn_act(use_act=True):
     def layers(x):
-        x = tk.layers.GroupNormalization(gamma_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        x = tk.layers.GroupNormalization(gamma_regularizer=tk.keras.regularizers.l2(1e-5))(x)
         x = tk.layers.MixFeat()(x)
         x = tk.keras.layers.Activation('relu')(x) if use_act else x
         return x
