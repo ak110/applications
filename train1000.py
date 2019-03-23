@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Train with 1000.
-
-[INFO ] Test Accuracy:      0.7339
-[INFO ] Test Cross Entropy: 0.8784
-
-"""
+"""Train with 1000."""
 import argparse
 import pathlib
 
@@ -89,26 +84,52 @@ def _extract1000(X, y, num_classes):
 
 def _create_network(input_shape, num_classes):
     """ネットワークを作成して返す。"""
-    inputs = x = tk.keras.layers.Input(input_shape, dtype='float16')
+    inputs = x = tk.keras.layers.Input(input_shape)
     x = tk.layers.Preprocess(mode='tf')(x)
-    x = tk.layers.Conv2DEx(128, activation='relu')(x)
-    x = tk.layers.Conv2DEx(128, activation='relu')(x)
-    x = tk.layers.Conv2DEx(128, activation='relu')(x)
-    x = tk.keras.layers.MaxPooling2D()(x)
-    x = tk.layers.Conv2DEx(256, activation='relu')(x)
-    x = tk.layers.Conv2DEx(256, activation='relu')(x)
-    x = tk.layers.Conv2DEx(256, activation='relu')(x)
-    x = tk.keras.layers.MaxPooling2D()(x)
-    x = tk.layers.Conv2DEx(512, activation='relu')(x)
-    x = tk.layers.Conv2DEx(512, activation='relu')(x)
-    x = tk.layers.Conv2DEx(512, activation='relu')(x)
-    x = tk.keras.layers.Lambda(lambda x: tk.K.cast(x, 'float32'))(x)
+    x = _conv2d(128, use_act=False)(x)
+    x = _blocks(128, 8)(x)
+    x = _conv2d(256, strides=2, use_act=False)(x)
+    x = _blocks(256, 8)(x)
+    x = _conv2d(512, strides=2, use_act=False)(x)
+    x = _blocks(512, 8)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(num_classes, activation='softmax',
                               kernel_regularizer=tk.keras.regularizers.l2(1e-4),
                               bias_regularizer=tk.keras.regularizers.l2(1e-4))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
     return model
+
+
+def _blocks(filters, count):
+    def layers(x):
+        for _ in range(count):
+            sc = x
+            x = _conv2d(filters, use_act=True)(x)
+            x = _conv2d(filters, use_act=False)(x)
+            x = tk.keras.layers.add([sc, x])
+        x = _bn_act()(x)
+        return x
+    return layers
+
+
+def _conv2d(filters, kernel_size=3, strides=1, use_act=True):
+    def layers(x):
+        x = tk.keras.layers.Conv2D(filters, kernel_size=kernel_size, strides=strides,
+                                   padding='same', use_bias=False,
+                                   kernel_initializer='he_uniform',
+                                   kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        x = _bn_act(use_act=use_act)(x)
+        return x
+    return layers
+
+
+def _bn_act(use_act=True):
+    def layers(x):
+        x = tk.layers.GroupNormalization(gamma_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        x = tk.layers.MixFeat()(x)
+        x = tk.keras.layers.Activation('relu')(x) if use_act else x
+        return x
+    return layers
 
 
 class MyDataset(tk.data.Dataset):
@@ -121,8 +142,9 @@ class MyDataset(tk.data.Dataset):
         self.num_classes = num_classes
         if data_augmentation:
             self.aug = A.Compose([
-                tk.image.RandomTransform(width=input_shape[1], height=input_shape[0]),
-                tk.image.RandomColorAugmentors(),
+                A.PadIfNeeded(40, 40, border_mode=cv2.BORDER_CONSTANT, value=[127, 127, 127], p=1),
+                tk.autoaugment.CIFAR10Policy(),
+                A.RandomCrop(32, 32),
                 tk.image.RandomErasing(),
             ])
         else:
