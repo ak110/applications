@@ -45,7 +45,7 @@ def _train(args):
     (X_train, y_train), (X_val, y_val) = _load_data(args.data_dir)
     train_dataset = MyDataset(X_train, y_train, input_shape, data_augmentation=True)
     val_dataset = MyDataset(X_val, y_val, input_shape)
-    train_data = tk.data.DataLoader(train_dataset, batch_size, shuffle=True, mixup=True, mp_size=tk.hvd.get().size())
+    train_data = tk.data.DataLoader(train_dataset, batch_size, shuffle=True, mp_size=tk.hvd.get().size())
     val_data = tk.data.DataLoader(val_dataset, batch_size * 2, shuffle=True)
 
     model = _create_network(input_shape, base_lr)
@@ -67,9 +67,9 @@ def _train(args):
         # 検証
         val_data = tk.data.DataLoader(val_dataset, batch_size * 2)
         pred_val = model.predict_generator(val_data, verbose=1 if tk.hvd.is_master() else 0)
-        score = compute_score(np.int32(y_val > 0.5), np.int32(pred_val > 0.5))
+        score = compute_score(np.int32(y_val > 127), np.int32(pred_val > 0.5))
         logger.info(f'score:     {score:.3f}')
-        print_metrics(y_val > 0.5, pred_val > 0.5, print_fn=logger.info)
+        print_metrics(y_val > 127, pred_val > 0.5, print_fn=logger.info)
 
 
 def _load_data(data_dir):
@@ -77,12 +77,12 @@ def _load_data(data_dir):
     import pandas as pd
 
     def _load_image(X):
-        X = np.array([tk.ndimage.load(p, grayscale=True).astype(np.float32) for p in tk.utils.tqdm(X, desc='load')])
+        X = np.array([tk.ndimage.load(p, grayscale=True) for p in tk.utils.tqdm(X, desc='load')])
         return X
 
     id_list = pd.read_csv(data_dir / 'train.csv')['id'].values
     X = _load_image([data_dir / 'train' / 'images' / f'{id_}.png' for id_ in id_list])
-    y = _load_image([data_dir / 'train' / 'masks' / f'{id_}.png' for id_ in id_list]) / 255
+    y = _load_image([data_dir / 'train' / 'masks' / f'{id_}.png' for id_ in id_list])
     ti, vi = tk.ml.cv_indices(X, y, cv_count=5, cv_index=0, split_seed=6768115, stratify=False)
     (X_train, y_train), (X_val, y_val) = (X[ti], y[ti]), (X[vi], y[vi])
 
@@ -201,11 +201,10 @@ def print_metrics(y_true, y_pred, print_fn):
 class MyDataset(tk.data.Dataset):
     """Dataset。"""
 
-    def __init__(self, X, y, input_shape, num_classes, data_augmentation=False):
+    def __init__(self, X, y, input_shape, data_augmentation=False):
         self.X = X
         self.y = y
         self.input_shape = input_shape
-        self.num_classes = num_classes
         if data_augmentation:
             self.aug = A.Compose([
                 tk.image.RandomTransform(width=input_shape[1], height=input_shape[0]),
@@ -221,9 +220,9 @@ class MyDataset(tk.data.Dataset):
         return len(self.X)
 
     def __getitem__(self, index):
-        d = self.aug(image=X[index], mask=self.y[index])
+        d = self.aug(image=self.X[index], mask=self.y[index])
         X = d['image']
-        y = d['mask']
+        y = d['mask'] / 255
         return X, y
 
 
