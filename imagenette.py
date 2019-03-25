@@ -100,8 +100,7 @@ def _create_network(input_shape, num_classes):
     x = _blocks(512, 4)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(num_classes, activation='softmax',
-                              kernel_regularizer=tk.keras.regularizers.l2(1e-5),
-                              bias_regularizer=tk.keras.regularizers.l2(1e-5))(x)
+                              kernel_regularizer=tk.keras.regularizers.l2(1e-5))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
     return model
 
@@ -131,7 +130,7 @@ def _conv2d(filters, kernel_size=3, strides=1, use_act=True):
 
 def _bn_act(use_act=True):
     def layers(x):
-        x = tk.layers.BatchNormalization(gamma_regularizer=tk.keras.regularizers.l2(1e-5))(x)
+        x = tk.keras.layers.BatchNormalization(gamma_regularizer=tk.keras.regularizers.l2(1e-5))(x)
         x = tk.layers.MixFeat()(x)
         x = tk.keras.layers.Activation('relu')(x) if use_act else x
         return x
