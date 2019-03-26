@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""TGS Salt Identification Challengeの実験用コード。"""
+"""TGS Salt Identification Challengeの実験用コード。
+
+- 一番良かったモデル(ls_darknet53_coord_hcs): 0.871
+- 転移学習無しの最大(ls_scratch): 0.837
+
+"""
 import argparse
 import pathlib
 
@@ -154,7 +159,7 @@ def _conv2d(filters, kernel_size=3, strides=1, use_act=True):
 
 def _bn_act(use_act=True):
     def layers(x):
-        x = tk.layers.BatchNormalization(gamma_regularizer=tk.keras.regularizers.l2(1e-5))(x)
+        x = tk.keras.layers.BatchNormalization(gamma_regularizer=tk.keras.regularizers.l2(1e-5))(x)
         x = tk.layers.MixFeat()(x)
         x = tk.keras.layers.Activation('relu')(x) if use_act else x
         return x
