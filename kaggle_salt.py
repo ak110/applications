@@ -43,7 +43,7 @@ def _check(args):
 @tk.log.trace()
 def _train(args):
     input_shape = (101, 101, 1)
-    epochs = 300
+    epochs = 600
     batch_size = 16
     base_lr = 1e-3 * batch_size * tk.hvd.get().size()
 
