@@ -16,16 +16,28 @@ logger = tk.log.get(__name__)
 def _main():
     tk.utils.better_exceptions()
     parser = argparse.ArgumentParser()
-    parser.add_argument('--check', action='store_true', help='3epochだけお試し実行(動作確認用)')
-    parser.add_argument('--models-dir', default=pathlib.Path('models/train1000'), type=pathlib.Path)
+    parser.add_argument('mode', default='train', choices=('check', 'train'), nargs='?')
+    parser.add_argument('--models-dir', default=pathlib.Path(f'models/{pathlib.Path(__file__).stem}'), type=pathlib.Path)
     args = parser.parse_args()
     with tk.dl.session(use_horovod=True):
-        tk.log.init(args.models_dir / 'train.log')
-        _run(args)
+        tk.log.init(None if args.mode in ('check',) else args.models_dir / f'{args.mode}.log')
+        {
+            'check': _check,
+            'train': _train,
+        }[args.mode](args)
 
 
 @tk.log.trace()
-def _run(args):
+def _check(args):
+    _ = args
+    num_classes = 10
+    input_shape = (32, 32, 3)
+    model = _create_network(input_shape, num_classes)
+    model.summary()
+
+
+@tk.log.trace()
+def _train(args):
     epochs = 3 if args.check else 1800
     batch_size = 64
     base_lr = 1e-3 * batch_size * tk.hvd.get().size()
@@ -42,6 +54,8 @@ def _run(args):
     optimizer = tk.hvd.get().DistributedOptimizer(optimizer, compression=tk.hvd.get().Compression.fp16)
     model.compile(optimizer, 'categorical_crossentropy', ['acc'])
     model.summary(print_fn=logger.info if tk.hvd.is_master() else lambda x: x)
+    if tk.hvd.is_master():
+        tk.keras.utils.plot_model(model, args.models_dir / 'model.svg', show_shapes=True)
 
     callbacks = [
         tk.callbacks.CosineAnnealing(),

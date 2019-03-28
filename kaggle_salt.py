@@ -10,7 +10,6 @@ import pathlib
 
 import albumentations as A
 import numpy as np
-import sklearn.metrics
 
 import pytoolkit as tk
 
@@ -21,11 +20,11 @@ def _main():
     tk.utils.better_exceptions()
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', default='train', choices=('check', 'train'), nargs='?')
-    parser.add_argument('--data-dir', default=pathlib.Path('data/kaggle_salt'), type=pathlib.Path)
-    parser.add_argument('--models-dir', default=pathlib.Path('models/kaggle_salt'), type=pathlib.Path)
+    parser.add_argument('--data-dir', default=pathlib.Path(f'data/kaggle_salt'), type=pathlib.Path)
+    parser.add_argument('--models-dir', default=pathlib.Path(f'models/{pathlib.Path(__file__).stem}'), type=pathlib.Path)
     args = parser.parse_args()
     with tk.dl.session(use_horovod=True):
-        tk.log.init(args.models_dir / 'train.log')
+        tk.log.init(None if args.mode in ('check',) else args.models_dir / f'{args.mode}.log')
         {
             'check': _check,
             'train': _train,
