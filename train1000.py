@@ -38,7 +38,7 @@ def _check(args):
 
 @tk.log.trace()
 def _train(args):
-    epochs = 3 if args.check else 1800
+    epochs = 1800
     batch_size = 64
     base_lr = 1e-3 * batch_size * tk.hvd.get().size()
 
