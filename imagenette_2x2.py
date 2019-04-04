@@ -9,7 +9,6 @@ import sklearn.metrics
 import pytoolkit as tk
 
 logger = tk.log.get(__name__)
-module_name = pathlib.Path(__file__).stem
 
 
 def _main():
@@ -17,9 +16,9 @@ def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', default='train', choices=('check', 'train'), nargs='?')
     parser.add_argument('--data-dir', default=pathlib.Path(f'data/imagenette'), type=pathlib.Path)
-    parser.add_argument('--models-dir', default=pathlib.Path(f'models/{module_name}'), type=pathlib.Path)
+    parser.add_argument('--models-dir', default=pathlib.Path(f'models/{pathlib.Path(__file__).stem}'), type=pathlib.Path)
     args = parser.parse_args()
-    with tk.dl.session(use_horovod=True):
+    with tk.dl.session(use_horovod=args.mode not in ('check',)):
         tk.log.init(None if args.mode in ('check',) else args.models_dir / f'{args.mode}.log')
         {
             'check': _check,
@@ -91,19 +90,28 @@ def _create_network(input_shape, num_classes):
     inputs = x = tk.keras.layers.Input(input_shape)
     x = tk.layers.Preprocess(mode='tf')(x)
     x = _conv2d(64, 7, strides=2)(x)  # 160
-    x = _conv2d(128, strides=2, use_act=False)(x)  # 80
+    x = _down(128, use_act=False)(x)
     x = _blocks(128, 2)(x)
-    x = _conv2d(256, strides=2, use_act=False)(x)  # 40
+    x = _down(256, use_act=False)(x)  # 40
     x = _blocks(256, 4)(x)
-    x = _conv2d(512, strides=2, use_act=False)(x)  # 20
+    x = _down(512, use_act=False)(x)  # 20
     x = _blocks(512, 8)(x)
-    x = _conv2d(512, strides=2, use_act=False)(x)  # 10
+    x = _down(512, use_act=False)(x)  # 10
     x = _blocks(512, 4)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(num_classes, activation='softmax',
                               kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
     return model
+
+
+def _down(filters, use_act=True):
+    def layers(x):
+        g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        x = tk.keras.layers.multiply([x, g])
+        x = _conv2d(filters, kernel_size=2, strides=2, use_act=use_act)(x)
+        return x
+    return layers
 
 
 def _blocks(filters, count):
@@ -120,10 +128,10 @@ def _blocks(filters, count):
 
 def _conv2d(filters, kernel_size=3, strides=1, use_act=True):
     def layers(x):
-        x = Conv2D(filters, kernel_size=kernel_size, strides=strides,
-                   padding='same', use_bias=False,
-                   kernel_initializer='he_uniform',
-                   kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        x = tk.keras.layers.Conv2D(filters, kernel_size=kernel_size, strides=strides,
+                                   padding='same', use_bias=False,
+                                   kernel_initializer='he_uniform',
+                                   kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
         x = _bn_act(use_act=use_act)(x)
         return x
     return layers
@@ -136,21 +144,6 @@ def _bn_act(use_act=True):
         x = tk.keras.layers.Activation('relu')(x) if use_act else x
         return x
     return layers
-
-
-keras, K = tk.keras, tk.K
-
-class Conv2D(keras.layers.Conv2D):
-    """Weight Standardization <https://arxiv.org/abs/1903.10520>"""
-
-    def call(self, inputs):
-        backup = self.kernel
-        kernel_mean = K.mean(self.kernel, axis=[0, 1, 2])
-        kernel_std = K.std(self.kernel, axis=[0, 1, 2])
-        self.kernel = (self.kernel - kernel_mean) / (kernel_std + 1e-5)
-        outputs = super().call(inputs)
-        self.kernel = backup
-        return outputs
 
 
 class MyDataset(tk.data.Dataset):

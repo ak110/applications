@@ -18,7 +18,7 @@ def _main():
     parser.add_argument('--data-dir', default=pathlib.Path(f'data/imagenette'), type=pathlib.Path)
     parser.add_argument('--models-dir', default=pathlib.Path(f'models/{pathlib.Path(__file__).stem}'), type=pathlib.Path)
     args = parser.parse_args()
-    with tk.dl.session(use_horovod=True):
+    with tk.dl.session(use_horovod=args.mode not in ('check',)):
         tk.log.init(None if args.mode in ('check',) else args.models_dir / f'{args.mode}.log')
         {
             'check': _check,
@@ -30,14 +30,14 @@ def _main():
 def _check(args):
     _ = args
     num_classes = 10
-    input_shape = (320, 320, 3)
+    input_shape = (321, 321, 3)
     model = _create_network(input_shape, num_classes)
     model.summary()
 
 
 @tk.log.trace()
 def _train(args):
-    input_shape = (320, 320, 3)
+    input_shape = (321, 321, 3)
     epochs = 1800
     batch_size = 16
     base_lr = 1e-3 * batch_size * tk.hvd.get().size()
@@ -90,19 +90,28 @@ def _create_network(input_shape, num_classes):
     inputs = x = tk.keras.layers.Input(input_shape)
     x = tk.layers.Preprocess(mode='tf')(x)
     x = _conv2d(64, 7, strides=2)(x)  # 160
-    x = _conv2d(128, strides=2, use_act=False)(x)  # 80
+    x = _down(128, use_act=False)(x)
     x = _blocks(128, 2)(x)
-    x = _conv2d(256, strides=2, use_act=False)(x)  # 40
+    x = _down(256, use_act=False)(x)  # 40
     x = _blocks(256, 4)(x)
-    x = _conv2d(512, strides=2, use_act=False)(x)  # 20
+    x = _down(512, use_act=False)(x)  # 20
     x = _blocks(512, 8)(x)
-    x = _conv2d(512, strides=2, use_act=False)(x)  # 10
+    x = _down(512, use_act=False)(x)  # 10
     x = _blocks(512, 4)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(num_classes, activation='softmax',
                               kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
     return model
+
+
+def _down(filters, use_act=True):
+    def layers(x):
+        g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        x = tk.keras.layers.multiply([x, g])
+        x = _conv2d(filters, strides=2, use_act=use_act)(x)
+        return x
+    return layers
 
 
 def _blocks(filters, count):
