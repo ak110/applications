@@ -120,28 +120,30 @@ def _blocks(filters, count):
     def layers(x):
         for _ in range(count):
             sc = x
-            x = _conv2d(filters, use_act=True)(x)
-            x = _conv2d(filters, use_act=False)(x)
+            x = _conv2d(filters)(x)
+            x = _conv2d(filters, use_act=False, gamma_zero=True)(x)
             x = tk.keras.layers.add([sc, x])
         x = _bn_act()(x)
         return x
     return layers
 
 
-def _conv2d(filters, kernel_size=3, strides=1, use_act=True):
+def _conv2d(filters, kernel_size=3, strides=1, use_act=True, gamma_zero=False):
     def layers(x):
         x = tk.keras.layers.Conv2D(filters, kernel_size=kernel_size, strides=strides,
                                    padding='same', use_bias=False,
                                    kernel_initializer='he_uniform',
                                    kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-        x = _bn_act(use_act=use_act)(x)
+        x = _bn_act(use_act=use_act, gamma_zero=gamma_zero)(x)
         return x
     return layers
 
 
-def _bn_act(use_act=True):
+def _bn_act(use_act=True, gamma_zero=False):
     def layers(x):
-        x = tk.keras.layers.BatchNormalization(gamma_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
+        x = tk.keras.layers.BatchNormalization(gamma_initializer=tk.keras.initializers.zeros() if gamma_zero else tk.keras.initializers.ones(),
+                                               gamma_regularizer=tk.keras.regularizers.l2(1e-4))(x)
         x = tk.layers.MixFeat()(x)
         x = tk.keras.layers.Activation('relu')(x) if use_act else x
         return x
