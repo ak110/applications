@@ -63,7 +63,7 @@ def _train(args):
         tk.hvd.get().callbacks.BroadcastGlobalVariablesCallback(0),
         tk.hvd.get().callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1),
         tk.callbacks.EpochLogger(),
-        tk.callbacks.TerminateOnNaN(),
+        tk.callbacks.ErrorOnNaN(),
     ]
     model.fit_generator(train_data, epochs=epochs, callbacks=callbacks,
                         verbose=1 if tk.hvd.is_master() else 0)
