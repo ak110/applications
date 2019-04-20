@@ -3,7 +3,6 @@
 import argparse
 import pathlib
 
-import albumentations as A
 import sklearn.metrics
 
 import pytoolkit as tk
@@ -91,14 +90,14 @@ def _create_network(input_shape, num_classes):
     """ネットワークを作成して返す。"""
     inputs = x = tk.keras.layers.Input(input_shape)
     x = tk.layers.Preprocess(mode='tf')(x)
-    x = _conv2d(64, 7, strides=2)(x)  # 160
-    x = _down(128, use_act=False)(x)
+    x = _conv2d(64, 7, strides=2)(x)  # 1/2
+    x = _down(128, use_act=False)(x)  # 1/4
     x = _blocks(128, 2)(x)
-    x = _down(256, use_act=False)(x)  # 40
+    x = _down(256, use_act=False)(x)  # 1/8
     x = _blocks(256, 4)(x)
-    x = _down(512, use_act=False)(x)  # 20
+    x = _down(512, use_act=False)(x)  # 1/16
     x = _blocks(512, 8)(x)
-    x = _down(512, use_act=False)(x)  # 10
+    x = _down(512, use_act=False)(x)  # 1/32
     x = _blocks(512, 4)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(num_classes, activation='softmax',
@@ -142,7 +141,7 @@ def _conv2d(filters, kernel_size=3, strides=1, use_act=True, gamma_zero=False):
 def _bn_act(use_act=True, gamma_zero=False):
     def layers(x):
         # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
-        x = tk.keras.layers.BatchNormalization(gamma_initializer=tk.keras.initializers.zeros() if gamma_zero else tk.keras.initializers.ones(),
+        x = tk.keras.layers.BatchNormalization(gamma_initializer='zeros' if gamma_zero else 'ones',
                                                gamma_regularizer=tk.keras.regularizers.l2(1e-4))(x)
         x = tk.layers.MixFeat()(x)
         x = tk.keras.layers.Activation('relu')(x) if use_act else x
@@ -159,7 +158,7 @@ class MyDataset(tk.data.Dataset):
         self.input_shape = input_shape
         self.num_classes = num_classes
         if data_augmentation:
-            self.aug = A.Compose([
+            self.aug = tk.image.Compose([
                 tk.image.RandomTransform(width=input_shape[1], height=input_shape[0]),
                 tk.image.RandomColorAugmentors(),
                 tk.image.RandomErasing(),

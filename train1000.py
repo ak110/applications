@@ -157,7 +157,7 @@ class MyDataset(tk.data.Dataset):
         self.input_shape = input_shape
         self.num_classes = num_classes
         if data_augmentation:
-            self.aug = A.Compose([
+            self.aug = tk.image.Compose([
                 A.PadIfNeeded(40, 40, border_mode=cv2.BORDER_CONSTANT, value=[127, 127, 127], p=1),
                 tk.autoaugment.CIFAR10Policy(),
                 A.RandomCrop(32, 32),

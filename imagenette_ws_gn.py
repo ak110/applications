@@ -3,7 +3,6 @@
 import argparse
 import pathlib
 
-import albumentations as A
 import sklearn.metrics
 
 import pytoolkit as tk
@@ -142,6 +141,7 @@ def _bn_act(use_act=True):
 
 keras, K = tk.keras, tk.K
 
+
 class Conv2D(keras.layers.Conv2D):
     """Weight Standardization <https://arxiv.org/abs/1903.10520>"""
 
@@ -164,7 +164,7 @@ class MyDataset(tk.data.Dataset):
         self.input_shape = input_shape
         self.num_classes = num_classes
         if data_augmentation:
-            self.aug = A.Compose([
+            self.aug = tk.image.Compose([
                 tk.image.RandomTransform(width=input_shape[1], height=input_shape[0]),
                 tk.image.RandomColorAugmentors(),
                 tk.image.RandomErasing(),

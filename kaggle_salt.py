@@ -8,7 +8,6 @@
 import argparse
 import pathlib
 
-import albumentations as A
 import numpy as np
 
 import pytoolkit as tk
@@ -212,7 +211,7 @@ class MyDataset(tk.data.Dataset):
         self.y = y
         self.input_shape = input_shape
         if data_augmentation:
-            self.aug = A.Compose([
+            self.aug = tk.image.Compose([
                 tk.image.RandomTransform(width=input_shape[1], height=input_shape[0]),
                 tk.image.RandomBlur(p=0.125),
                 tk.image.RandomUnsharpMask(p=0.125),
