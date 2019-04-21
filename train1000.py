@@ -6,7 +6,6 @@ import pathlib
 import albumentations as A
 import cv2
 import numpy as np
-import sklearn.metrics
 
 import pytoolkit as tk
 
@@ -46,34 +45,29 @@ def _train(args):
     input_shape = X_train.shape[1:]
     train_dataset = MyDataset(X_train, y_train, input_shape, num_classes, data_augmentation=True)
     test_dataset = MyDataset(X_test, y_test, input_shape, num_classes)
-    train_data = tk.data.DataLoader(train_dataset, batch_size, shuffle=True, mixup=True, mp_size=tk.hvd.get().size())
-    test_data = tk.data.DataLoader(test_dataset, batch_size * 2)
 
     model = _create_network(input_shape, num_classes)
     optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True)
-    optimizer = tk.hvd.get().DistributedOptimizer(optimizer, compression=tk.hvd.get().Compression.fp16)
-    model.compile(optimizer, 'categorical_crossentropy', ['acc'])
-    model.summary(print_fn=logger.info if tk.hvd.is_master() else lambda x: x)
-    if tk.hvd.is_master():
-        tk.keras.utils.plot_model(model, args.models_dir / 'model.svg', show_shapes=True)
+    tk.models.compile(model, optimizer, 'categorical_crossentropy', ['acc'])
+    tk.models.summary(model)
+    tk.models.plot_model(model, args.models_dir / 'model.svg', show_shapes=True)
 
     callbacks = [
         tk.callbacks.CosineAnnealing(),
         tk.hvd.get().callbacks.BroadcastGlobalVariablesCallback(0),
+        tk.hvd.get().callbacks.MetricAverageCallback(),
         tk.hvd.get().callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1),
-        tk.callbacks.EpochLogger(),
-        tk.callbacks.ErrorOnNaN(),
     ]
-    model.fit_generator(train_data, epochs=epochs, callbacks=callbacks,
-                        verbose=1 if tk.hvd.is_master() else 0)
+    tk.models.fit(model, train_dataset, batch_size=batch_size,
+                  epochs=epochs, verbose=1, callbacks=callbacks,
+                  mixup=True)
+    # 後で何かしたくなった時のために一応保存
+    tk.models.save(model, args.models_dir / 'model.h5')
 
+    evals = tk.models.evaluate(model, test_dataset, batch_size=batch_size * 2)
     if tk.hvd.is_master():
-        # 検証
-        pred_test = model.predict_generator(test_data, verbose=1 if tk.hvd.is_master() else 0)
-        logger.info(f'Test Accuracy:      {sklearn.metrics.accuracy_score(y_test, pred_test.argmax(axis=-1)):.4f}')
-        logger.info(f'Test Cross Entropy: {sklearn.metrics.log_loss(y_test, pred_test):.4f}')
-        # 後で何かしたくなった時のために一応保存
-        model.save(args.models_dir / 'model.h5', include_optimizer=False)
+        for n, v in evals.items():
+            logger.info(f'{n:8s}: {v:.3f}')
 
 
 def _load_data():

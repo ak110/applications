@@ -22,7 +22,7 @@ def _main():
     parser.add_argument('--data-dir', default=pathlib.Path(f'data/kaggle_salt'), type=pathlib.Path)
     parser.add_argument('--models-dir', default=pathlib.Path(f'models/{pathlib.Path(__file__).stem}'), type=pathlib.Path)
     args = parser.parse_args()
-    with tk.dl.session(use_horovod=True):
+    with tk.dl.session(use_horovod=args.mode not in ('check',)):
         tk.log.init(None if args.mode in ('check',) else args.models_dir / f'{args.mode}.log')
         {
             'check': _check,
@@ -48,30 +48,25 @@ def _train(args):
     (X_train, y_train), (X_val, y_val) = _load_data(args.data_dir)
     train_dataset = MyDataset(X_train, y_train, input_shape, data_augmentation=True)
     val_dataset = MyDataset(X_val, y_val, input_shape)
-    train_data = tk.data.DataLoader(train_dataset, batch_size, shuffle=True, mp_size=tk.hvd.get().size())
-    val_data = tk.data.DataLoader(val_dataset, batch_size * 2, shuffle=True)
 
     model = _create_network(input_shape, base_lr)
-    model.summary(print_fn=logger.info if tk.hvd.is_master() else lambda x: x)
-    if tk.hvd.is_master():
-        tk.keras.utils.plot_model(model, args.models_dir / 'model.svg', show_shapes=True)
+    tk.models.summary(model)
+    tk.models.plot_model(model, args.models_dir / 'model.svg', show_shapes=True)
 
     callbacks = [
         tk.callbacks.CosineAnnealing(),
         tk.hvd.get().callbacks.BroadcastGlobalVariablesCallback(0),
+        tk.hvd.get().callbacks.MetricAverageCallback(),
         tk.hvd.get().callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1),
-        tk.callbacks.EpochLogger(),
-        tk.callbacks.ErrorOnNaN(),
     ]
-    model.fit_generator(train_data, validation_data=val_data, epochs=epochs, callbacks=callbacks,
-                        verbose=1 if tk.hvd.is_master() else 0)
+    tk.models.fit(model, train_dataset, validation_data=val_dataset, batch_size=batch_size,
+                  epochs=epochs, verbose=1, callbacks=callbacks)
+    # 後で何かしたくなった時のために一応保存
+    tk.models.save(model, args.models_dir / 'model.h5')
 
     if tk.hvd.is_master():
-        # 後で何かしたくなった時のために一応保存
-        model.save(args.models_dir / 'model.h5', include_optimizer=False)
         # 検証
-        val_data = tk.data.DataLoader(val_dataset, batch_size * 2)
-        pred_val = model.predict_generator(val_data, verbose=1 if tk.hvd.is_master() else 0)
+        pred_val = tk.models.predict(model, val_dataset, batch_size=batch_size * 2)
         score = compute_score(np.int32(y_val > 127), np.int32(pred_val > 0.5))
         logger.info(f'score:     {score:.3f}')
         print_metrics(y_val > 127, pred_val > 0.5, print_fn=logger.info)
@@ -126,11 +121,10 @@ def _create_network(input_shape, base_lr):
 
     def loss(y_true, y_pred):
         _ = y_pred
-        return tk.losses.lovasz_hinge_with_logits(y_true, logits)
+        return tk.losses.lovasz_hinge(y_true, logits, with_logit=True)
 
     optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0)
-    optimizer = tk.hvd.get().DistributedOptimizer(optimizer, compression=tk.hvd.get().Compression.fp16)
-    model.compile(optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou])
+    tk.models.compile(model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou])
     return model
 
 
