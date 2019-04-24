@@ -101,7 +101,7 @@ def _create_network(input_shape, num_classes):
 
 def _down(filters, use_act=True):
     def layers(x):
-        g = tk.layers.WSConv2D(1, 3, activation='sigmoid')(x)
+        g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
         x = tk.keras.layers.multiply([x, g])
         x = _conv2d(filters, strides=2, use_act=use_act)(x)
         return x
