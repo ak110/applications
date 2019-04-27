@@ -53,20 +53,16 @@ def _train(args):
     tk.models.summary(model)
     tk.models.plot_model(model, args.models_dir / 'model.svg', show_shapes=True)
 
-    callbacks = [
-        tk.callbacks.CosineAnnealing(),
-        tk.hvd.get().callbacks.BroadcastGlobalVariablesCallback(0),
-        tk.hvd.get().callbacks.MetricAverageCallback(),
-        tk.hvd.get().callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1),
-    ]
+    callbacks = []
+    callbacks.append(tk.callbacks.CosineAnnealing())
     tk.models.fit(model, train_dataset, validation_data=val_dataset, batch_size=batch_size,
                   epochs=epochs, verbose=1, callbacks=callbacks)
     # 後で何かしたくなった時のために一応保存
     tk.models.save(model, args.models_dir / 'model.h5')
 
+    # 検証
+    pred_val = tk.models.predict(model, val_dataset, batch_size=batch_size * 2)
     if tk.hvd.is_master():
-        # 検証
-        pred_val = tk.models.predict(model, val_dataset, batch_size=batch_size * 2)
         score = compute_score(np.int32(y_val > 127), np.int32(pred_val > 0.5))
         logger.info(f'score:     {score:.3f}')
         print_metrics(y_val > 127, pred_val > 0.5, print_fn=logger.info)

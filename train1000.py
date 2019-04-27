@@ -52,12 +52,8 @@ def _train(args):
     tk.models.summary(model)
     tk.models.plot_model(model, args.models_dir / 'model.svg', show_shapes=True)
 
-    callbacks = [
-        tk.callbacks.CosineAnnealing(),
-        tk.hvd.get().callbacks.BroadcastGlobalVariablesCallback(0),
-        tk.hvd.get().callbacks.MetricAverageCallback(),
-        tk.hvd.get().callbacks.LearningRateWarmupCallback(warmup_epochs=5, verbose=1),
-    ]
+    callbacks = []
+    callbacks.append(tk.callbacks.CosineAnnealing())
     tk.models.fit(model, train_dataset, batch_size=batch_size,
                   epochs=epochs, verbose=1, callbacks=callbacks,
                   mixup=True)
@@ -66,7 +62,7 @@ def _train(args):
 
     evals = tk.models.evaluate(model, test_dataset, batch_size=batch_size * 2)
     if tk.hvd.is_master():
-        for n, v in evals.items():
+        for n, v in evals:
             logger.info(f'{n:8s}: {v:.3f}')
 
 
