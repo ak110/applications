@@ -29,10 +29,9 @@ def _main():
 @tk.log.trace()
 def _check(args):
     _ = args
-    num_classes = 10
     input_shape = (32, 32, 3)
-    model = _create_network(input_shape, num_classes)
-    model.summary()
+    model = _create_network(input_shape, num_classes=10, base_lr=1)
+    tk.models.summary(model)
 
 
 @tk.log.trace()
@@ -46,24 +45,17 @@ def _train(args):
     train_dataset = MyDataset(X_train, y_train, input_shape, num_classes, data_augmentation=True)
     test_dataset = MyDataset(X_test, y_test, input_shape, num_classes)
 
-    model = _create_network(input_shape, num_classes)
-    optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True)
-    tk.models.compile(model, optimizer, 'categorical_crossentropy', ['acc'])
+    model = _create_network(input_shape, num_classes, base_lr)
     tk.models.summary(model)
-    tk.models.plot_model(model, args.models_dir / 'model.svg', show_shapes=True)
+    tk.models.plot_model(model, args.models_dir / 'model.svg')
 
     callbacks = []
     callbacks.append(tk.callbacks.CosineAnnealing())
     tk.models.fit(model, train_dataset, batch_size=batch_size,
                   epochs=epochs, verbose=1, callbacks=callbacks,
                   mixup=True)
-    # 後で何かしたくなった時のために一応保存
     tk.models.save(model, args.models_dir / 'model.h5')
-
-    evals = tk.models.evaluate(model, test_dataset, batch_size=batch_size * 2)
-    if tk.hvd.is_master():
-        for n, v in evals:
-            logger.info(f'{n:8s}: {v:.3f}')
+    tk.models.evaluate(model, test_dataset, batch_size=batch_size * 2)
 
 
 def _load_data():
@@ -89,49 +81,62 @@ def _extract1000(X, y, num_classes):
     return X[index_list], y[index_list]
 
 
-def _create_network(input_shape, num_classes):
+def _create_network(input_shape, num_classes, base_lr):
     """ネットワークを作成して返す。"""
     inputs = x = tk.keras.layers.Input(input_shape)
     x = tk.layers.Preprocess(mode='tf')(x)
-    x = _conv2d(128, use_act=False)(x)
+    x = _conv2d(128, 7, use_act=False)(x)
     x = _blocks(128, 8)(x)
-    x = _conv2d(256, strides=2, use_act=False)(x)
+    x = _down(256, use_act=False)(x)
     x = _blocks(256, 8)(x)
-    x = _conv2d(512, strides=2, use_act=False)(x)
+    x = _down(512, use_act=False)(x)
     x = _blocks(512, 8)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(num_classes, activation='softmax',
                               kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
+    optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True)
+    tk.models.compile(model, optimizer, 'categorical_crossentropy', ['acc'])
     return model
+
+
+def _down(filters, use_act=True):
+    def layers(x):
+        g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        x = tk.keras.layers.multiply([x, g])
+        x = _conv2d(filters, strides=2, use_act=use_act)(x)
+        return x
+    return layers
 
 
 def _blocks(filters, count):
     def layers(x):
         for _ in range(count):
             sc = x
-            x = _conv2d(filters, use_act=True)(x)
-            x = _conv2d(filters, use_act=False)(x)
+            x = _conv2d(filters)(x)
+            x = _conv2d(filters, use_act=False, gamma_zero=True)(x)
             x = tk.keras.layers.add([sc, x])
         x = _bn_act()(x)
         return x
     return layers
 
 
-def _conv2d(filters, kernel_size=3, strides=1, use_act=True):
+def _conv2d(filters, kernel_size=3, strides=1, use_act=True, gamma_zero=False):
     def layers(x):
         x = tk.keras.layers.Conv2D(filters, kernel_size=kernel_size, strides=strides,
                                    padding='same', use_bias=False,
                                    kernel_initializer='he_uniform',
                                    kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-        x = _bn_act(use_act=use_act)(x)
+        x = _bn_act(use_act=use_act, gamma_zero=gamma_zero)(x)
         return x
     return layers
 
 
-def _bn_act(use_act=True):
+def _bn_act(use_act=True, gamma_zero=False):
     def layers(x):
-        x = tk.keras.layers.BatchNormalization(gamma_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
+        x = tk.keras.layers.BatchNormalization(gamma_initializer='zeros' if gamma_zero else 'ones',
+                                               gamma_regularizer=tk.keras.regularizers.l2(1e-4))(x)
         x = tk.layers.MixFeat()(x)
         x = tk.keras.layers.Activation('relu')(x) if use_act else x
         return x

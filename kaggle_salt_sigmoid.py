@@ -56,7 +56,9 @@ def _train(args):
     callbacks = []
     callbacks.append(tk.callbacks.CosineAnnealing())
     tk.models.fit(model, train_dataset, validation_data=val_dataset, batch_size=batch_size,
-                  epochs=epochs, verbose=1, callbacks=callbacks)
+                  epochs=epochs, verbose=1, callbacks=callbacks,
+                  mixup=True)
+    # 後で何かしたくなった時のために一応保存
     tk.models.save(model, args.models_dir / 'model.h5')
     tk.models.evaluate(model, val_dataset, batch_size=batch_size * 2)
 
@@ -117,8 +119,8 @@ def _create_network(input_shape, base_lr):
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
 
     def loss(y_true, y_pred):
-        _ = y_pred
-        return tk.losses.lovasz_hinge(y_true, logits, from_logits=True)
+        _ = logits
+        return tk.losses.lovasz_sigmoid(y_true, y_pred)
 
     optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0)
     tk.models.compile(model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou])

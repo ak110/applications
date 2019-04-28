@@ -26,10 +26,9 @@ def _main():
 @tk.log.trace()
 def _check(args):
     _ = args
-    num_classes = 10
     input_shape = (321, 321, 3)
-    model = _create_network(input_shape, num_classes)
-    model.summary()
+    model = _create_network(input_shape, num_classes=10, base_lr=1)
+    tk.models.summary(model)
 
 
 @tk.log.trace()
@@ -44,24 +43,17 @@ def _train(args):
     train_dataset = MyDataset(X_train, y_train, input_shape, num_classes, data_augmentation=True)
     val_dataset = MyDataset(X_val, y_val, input_shape, num_classes)
 
-    model = _create_network(input_shape, num_classes)
-    optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True)
-    tk.models.compile(model, optimizer, 'categorical_crossentropy', ['acc'])
+    model = _create_network(input_shape, num_classes, base_lr)
     tk.models.summary(model)
-    tk.models.plot_model(model, args.models_dir / 'model.svg', show_shapes=True)
+    tk.models.plot_model(model, args.models_dir / 'model.svg')
 
     callbacks = []
     callbacks.append(tk.callbacks.CosineAnnealing())
     tk.models.fit(model, train_dataset, batch_size=batch_size,
                   epochs=epochs, verbose=1, callbacks=callbacks,
                   mixup=True)
-    # 後で何かしたくなった時のために一応保存
     tk.models.save(model, args.models_dir / 'model.h5')
-
-    evals = tk.models.evaluate(model, val_dataset, batch_size=batch_size * 2)
-    if tk.hvd.is_master():
-        for n, v in evals:
-            logger.info(f'{n:8s}: {v:.3f}')
+    tk.models.evaluate(model, val_dataset, batch_size=batch_size * 2)
 
 
 def _load_data(data_dir):
@@ -75,7 +67,7 @@ def _load_data(data_dir):
     return (X_train, y_train), (X_val, y_val), class_names
 
 
-def _create_network(input_shape, num_classes):
+def _create_network(input_shape, num_classes, base_lr):
     """ネットワークを作成して返す。"""
     inputs = x = tk.keras.layers.Input(input_shape)
     x = tk.layers.Preprocess(mode='tf')(x)
@@ -92,6 +84,8 @@ def _create_network(input_shape, num_classes):
     x = tk.keras.layers.Dense(num_classes, activation='softmax',
                               kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
+    optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True)
+    tk.models.compile(model, optimizer, 'categorical_crossentropy', ['acc'])
     return model
 
 
