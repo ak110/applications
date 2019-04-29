@@ -50,19 +50,13 @@ def _train(args):
     val_dataset = MyDataset(X_val, y_val, input_shape)
 
     model = _create_network(input_shape, base_lr)
-
-    # 仮
-    base_lr /= 10.0
-    tk.models.load_weights(model, args.models_dir / 'model.h5')
-
     tk.models.summary(model)
     tk.models.plot_model(model, args.models_dir / 'model.svg')
 
     callbacks = []
     callbacks.append(tk.callbacks.CosineAnnealing())
     tk.models.fit(model, train_dataset, validation_data=val_dataset, batch_size=batch_size,
-                  epochs=epochs, verbose=1, callbacks=callbacks,
-                  mixup=True)
+                  epochs=epochs, verbose=1, callbacks=callbacks)
     tk.models.save(model, args.models_dir / 'model.h5')
     tk.models.evaluate(model, val_dataset, batch_size=batch_size * 2)
 
