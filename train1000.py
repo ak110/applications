@@ -9,92 +9,84 @@ import numpy as np
 
 import pytoolkit as tk
 
+NUM_CLASSES = 10
+INPUT_SHAPE = (32, 32, 3)
+BATCH_SIZE = 64
+
 logger = tk.log.get(__name__)
 
 
 def _main():
     tk.utils.better_exceptions()
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', default='train', choices=('check', 'train'), nargs='?')
+    parser.add_argument('mode', default='train', choices=('check', 'train', 'validate'), nargs='?')
     parser.add_argument('--models-dir', default=pathlib.Path(f'models/{pathlib.Path(__file__).stem}'), type=pathlib.Path)
     args = parser.parse_args()
     with tk.dl.session(use_horovod=True):
-        tk.log.init(None if args.mode in ('check',) else args.models_dir / f'{args.mode}.log')
-        {
-            'check': _check,
-            'train': _train,
-        }[args.mode](args)
+        tk.utils.find_by_name([check, train, validate], args.mode)(args)
 
 
 @tk.log.trace()
-def _check(args):
-    _ = args
-    input_shape = (32, 32, 3)
-    model = _create_network(input_shape, num_classes=10, base_lr=1)
+def check(args):
+    """動作確認用コード。"""
+    tk.log.init(None)
+    model = create_model()
     tk.models.summary(model)
+    tk.models.plot(model, args.models_dir / 'model.svg')
 
 
 @tk.log.trace()
-def _train(args):
-    epochs = 1800
-    batch_size = 64
-    base_lr = 1e-3 * batch_size * tk.hvd.get().size()
-
-    (X_train, y_train), (X_test, y_test), num_classes = _load_data()
-    input_shape = X_train.shape[1:]
-    train_dataset = MyDataset(X_train, y_train, input_shape, num_classes, data_augmentation=True)
-    test_dataset = MyDataset(X_test, y_test, input_shape, num_classes)
-
-    model = _create_network(input_shape, num_classes, base_lr)
-    tk.models.summary(model)
-    tk.models.plot_model(model, args.models_dir / 'model.svg')
-
+def train(args):
+    """学習。"""
+    tk.log.init(args.models_dir / f'train.log')
+    train_dataset, val_dataset = load_data()
+    model = create_model()
     callbacks = []
     callbacks.append(tk.callbacks.CosineAnnealing())
-    tk.models.fit(model, train_dataset, batch_size=batch_size,
-                  epochs=epochs, verbose=1, callbacks=callbacks,
+    tk.models.fit(model, train_dataset, batch_size=BATCH_SIZE,
+                  epochs=1800, verbose=1, callbacks=callbacks,
                   mixup=True)
     tk.models.save(model, args.models_dir / 'model.h5')
-    tk.models.evaluate(model, test_dataset, batch_size=batch_size * 2)
+    tk.models.evaluate(model, val_dataset, batch_size=BATCH_SIZE * 2)
 
 
-def _load_data():
+@tk.log.trace()
+def validate(args, model=None):
+    """検証。"""
+    tk.log.init(args.models_dir / f'validate.log')
+    _, val_dataset = load_data()
+    model = model or tk.models.load(args.models_dir / 'model.h5')
+    model.compile('adam', 'categorical_crossentropy', ['acc'])
+    tk.models.evaluate(model, val_dataset, batch_size=BATCH_SIZE * 2)
+
+
+def load_data():
     """データの読み込み。"""
-    (X_train, y_train), (X_test, y_test) = tk.keras.datasets.cifar10.load_data()
+    (X_train, y_train), (X_val, y_val) = tk.keras.datasets.cifar10.load_data()
     y_train = np.squeeze(y_train)
-    y_test = np.squeeze(y_test)
+    y_val = np.squeeze(y_val)
     num_classes = len(np.unique(y_train))
-    X_train, y_train = _extract1000(X_train, y_train, num_classes=num_classes)
-    return (X_train, y_train), (X_test, y_test), num_classes
+    X_train, y_train = tk.ml.extract1000(X_train, y_train, num_classes=num_classes)
+    train_dataset = MyDataset(X_train, y_train, INPUT_SHAPE, NUM_CLASSES, data_augmentation=True)
+    val_dataset = MyDataset(X_val, y_val, INPUT_SHAPE, NUM_CLASSES)
+    return train_dataset, val_dataset
 
 
-def _extract1000(X, y, num_classes):
-    """https://github.com/mastnk/train1000 を参考にクラスごとに均等に先頭から取得する処理。"""
-    num_data = 1000
-    num_per_class = num_data // num_classes
-
-    index_list = []
-    for c in range(num_classes):
-        index_list.extend(np.where(y == c)[0][:num_per_class])
-    assert len(index_list) == num_data
-
-    return X[index_list], y[index_list]
-
-
-def _create_network(input_shape, num_classes, base_lr):
-    """ネットワークを作成して返す。"""
-    inputs = x = tk.keras.layers.Input(input_shape)
+def create_model():
+    """モデルの作成。"""
+    inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
     x = tk.layers.Preprocess(mode='tf')(x)
-    x = _conv2d(128, 7, use_act=False)(x)
+    x = _conv2d(128, use_act=False)(x)
     x = _blocks(128, 8)(x)
     x = _down(256, use_act=False)(x)
     x = _blocks(256, 8)(x)
     x = _down(512, use_act=False)(x)
     x = _blocks(512, 8)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
-    x = tk.keras.layers.Dense(num_classes, activation='softmax',
+    x = tk.keras.layers.Dense(NUM_CLASSES, activation='softmax',
                               kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
+    base_lr = 1e-3 * BATCH_SIZE * tk.hvd.get().size()
     optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True)
     tk.models.compile(model, optimizer, 'categorical_crossentropy', ['acc'])
     return model

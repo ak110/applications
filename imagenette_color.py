@@ -5,58 +5,59 @@ import pathlib
 
 import pytoolkit as tk
 
+NUM_CLASSES = 10
+INPUT_SHAPE = (321, 321, 3)
+BATCH_SIZE = 16
+
 logger = tk.log.get(__name__)
 
 
 def _main():
     tk.utils.better_exceptions()
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', default='train', choices=('check', 'train'), nargs='?')
+    parser.add_argument('mode', default='train', choices=('check', 'train', 'validate'), nargs='?')
     parser.add_argument('--data-dir', default=pathlib.Path(f'data/imagenette'), type=pathlib.Path)
     parser.add_argument('--models-dir', default=pathlib.Path(f'models/{pathlib.Path(__file__).stem}'), type=pathlib.Path)
     args = parser.parse_args()
-    with tk.dl.session(use_horovod=args.mode not in ('check',)):
-        tk.log.init(None if args.mode in ('check',) else args.models_dir / f'{args.mode}.log')
-        {
-            'check': _check,
-            'train': _train,
-        }[args.mode](args)
+    with tk.dl.session(use_horovod=True):
+        tk.utils.find_by_name([check, train, validate], args.mode)(args)
 
 
 @tk.log.trace()
-def _check(args):
-    _ = args
-    input_shape = (321, 321, 3)
-    model = _create_network(input_shape, num_classes=10, base_lr=1)
+def check(args):
+    """動作確認用コード。"""
+    tk.log.init(None)
+    model = create_model()
     tk.models.summary(model)
+    tk.models.plot(model, args.models_dir / 'model.svg')
 
 
 @tk.log.trace()
-def _train(args):
-    input_shape = (321, 321, 3)
-    epochs = 1800
-    batch_size = 16
-    base_lr = 1e-3 * batch_size * tk.hvd.get().size()
-
-    (X_train, y_train), (X_val, y_val), class_names = _load_data(args.data_dir)
-    num_classes = len(class_names)
-    train_dataset = MyDataset(X_train, y_train, input_shape, num_classes, data_augmentation=True)
-    val_dataset = MyDataset(X_val, y_val, input_shape, num_classes)
-
-    model = _create_network(input_shape, num_classes, base_lr)
-    tk.models.summary(model)
-    tk.models.plot_model(model, args.models_dir / 'model.svg')
-
+def train(args):
+    """学習。"""
+    tk.log.init(args.models_dir / f'train.log')
+    train_dataset, val_dataset = load_data(args.data_dir)
+    model = create_model()
     callbacks = []
     callbacks.append(tk.callbacks.CosineAnnealing())
-    tk.models.fit(model, train_dataset, batch_size=batch_size,
-                  epochs=epochs, verbose=1, callbacks=callbacks,
+    tk.models.fit(model, train_dataset, batch_size=BATCH_SIZE,
+                  epochs=1800, verbose=1, callbacks=callbacks,
                   mixup=True)
     tk.models.save(model, args.models_dir / 'model.h5')
-    tk.models.evaluate(model, val_dataset, batch_size=batch_size * 2)
+    tk.models.evaluate(model, val_dataset, batch_size=BATCH_SIZE * 2)
 
 
-def _load_data(data_dir):
+@tk.log.trace()
+def validate(args, model=None):
+    """検証。"""
+    tk.log.init(args.models_dir / f'validate.log')
+    _, val_dataset = load_data(args.data_dir)
+    model = model or tk.models.load(args.models_dir / 'model.h5')
+    model.compile('adam', 'categorical_crossentropy', ['acc'])
+    tk.models.evaluate(model, val_dataset, batch_size=BATCH_SIZE * 2)
+
+
+def load_data(data_dir):
     """データの読み込み。"""
     class_names, X_train, y_train = tk.ml.listup_classification(data_dir / 'train')
     _, X_val, y_val = tk.ml.listup_classification(data_dir / 'val', class_names=class_names)
@@ -64,12 +65,14 @@ def _load_data(data_dir):
     # trainとvalを逆にしちゃう。
     (X_train, y_train), (X_val, y_val) = (X_val, y_val), (X_train, y_train)
 
-    return (X_train, y_train), (X_val, y_val), class_names
+    train_dataset = MyDataset(X_train, y_train, INPUT_SHAPE, NUM_CLASSES, data_augmentation=True)
+    val_dataset = MyDataset(X_val, y_val, INPUT_SHAPE, NUM_CLASSES)
+    return train_dataset, val_dataset
 
 
-def _create_network(input_shape, num_classes, base_lr):
-    """ネットワークを作成して返す。"""
-    inputs = x = tk.keras.layers.Input(input_shape)
+def create_model():
+    """モデルの作成。"""
+    inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
     x = _colorconv(64, 7, strides=2)(x)  # 1/2
     x = _down(128, use_act=False)(x)  # 1/4
     x = _blocks(128, 2)(x)
@@ -80,9 +83,10 @@ def _create_network(input_shape, num_classes, base_lr):
     x = _down(512, use_act=False)(x)  # 1/32
     x = _blocks(512, 4)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
-    x = tk.keras.layers.Dense(num_classes, activation='softmax',
+    x = tk.keras.layers.Dense(NUM_CLASSES, activation='softmax',
                               kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
+    base_lr = 1e-3 * BATCH_SIZE * tk.hvd.get().size()
     optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True)
     tk.models.compile(model, optimizer, 'categorical_crossentropy', ['acc'])
     return model
@@ -123,7 +127,7 @@ def _conv2d(filters, kernel_size=3, strides=1, use_act=True, gamma_zero=False):
 def _colorconv(filters, kernel_size=3, strides=1, use_act=True):
     def layers(x):
         colors = []
-        for color in ['rgb', 'lab', 'yuv', 'ycbcr', 'hed', 'yiq']:
+        for color in ['rgb', 'lab', 'hsv', 'yuv', 'ycbcr', 'hed', 'yiq']:
             c = tk.layers.ConvertColor(f'rgb_to_{color}')(x)
             c = tk.keras.layers.Conv2D(filters, kernel_size=kernel_size, strides=strides,
                                        padding='same', use_bias=False,
