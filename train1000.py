@@ -26,16 +26,13 @@ def _main():
         tk.utils.find_by_name([check, train, validate], args.mode)(args)
 
 
-@tk.log.trace()
 def check(args):
     """動作確認用コード。"""
     tk.log.init(None)
     model = create_model()
-    tk.models.summary(model)
-    tk.models.plot(model, args.models_dir / 'model.svg')
+    tk.training.check(model, plot_path=args.models_dir / 'model.svg')
 
 
-@tk.log.trace()
 def train(args):
     """学習。"""
     tk.log.init(args.models_dir / f'train.log')
@@ -43,21 +40,19 @@ def train(args):
     model = create_model()
     callbacks = []
     callbacks.append(tk.callbacks.CosineAnnealing())
-    tk.models.fit(model, train_dataset, batch_size=BATCH_SIZE,
-                  epochs=1800, verbose=1, callbacks=callbacks,
-                  mixup=True)
-    tk.models.save(model, args.models_dir / 'model.h5')
-    tk.models.evaluate(model, val_dataset, batch_size=BATCH_SIZE * 2)
+    tk.training.train(model, train_dataset, val_dataset,
+                      batch_size=BATCH_SIZE, epochs=3, callbacks=callbacks,
+                      mixup=True, validation_freq=0,
+                      model_path=args.models_dir / 'model.h5')
 
 
-@tk.log.trace()
 def validate(args, model=None):
     """検証。"""
     tk.log.init(args.models_dir / f'validate.log')
     _, val_dataset = load_data()
     model = model or tk.models.load(args.models_dir / 'model.h5')
-    model.compile('adam', 'categorical_crossentropy', ['acc'])
-    tk.models.evaluate(model, val_dataset, batch_size=BATCH_SIZE * 2)
+    pred = tk.models.predict(model, val_dataset, batch_size=BATCH_SIZE * 2)
+    tk.ml.print_classification_metrics(val_dataset.y, pred)
 
 
 def load_data():
