@@ -3,8 +3,6 @@
 import argparse
 import pathlib
 
-import albumentations as A
-import cv2
 import numpy as np
 
 import pytoolkit as tk
@@ -51,9 +49,8 @@ def validate(args, model=None):
     tk.log.init(args.models_dir / f'validate.log')
     _, val_dataset = load_data()
     model = model or tk.models.load(args.models_dir / 'model.h5')
-    pred = tk.models.predict(model, val_dataset, batch_size=BATCH_SIZE * 2, use_horovod=True)
-    if tk.hvd.is_master():
-        tk.ml.print_classification_metrics(val_dataset.y, pred)
+    pred = tk.models.predict(model, val_dataset, batch_size=BATCH_SIZE * 2)
+    tk.ml.print_classification_metrics(val_dataset.y, pred)
 
 
 def load_data():
@@ -74,9 +71,9 @@ def create_model():
     x = tk.layers.Preprocess(mode='tf')(x)
     x = _conv2d(128, use_act=False)(x)
     x = _blocks(128, 12)(x)
-    x = _down(256, use_act=False)(x)
+    x = _down(256)(x)
     x = _blocks(256, 12)(x)
-    x = _down(512, use_act=False)(x)
+    x = _down(512)(x)
     x = _blocks(512, 12)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(NUM_CLASSES, activation='softmax',
@@ -88,11 +85,11 @@ def create_model():
     return model
 
 
-def _down(filters, use_act=True):
+def _down(filters):
     def layers(x):
         g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
         x = tk.keras.layers.multiply([x, g])
-        x = _conv2d(filters, strides=2, use_act=use_act)(x)
+        x = _conv2d(filters, strides=2, use_act=False)(x)
         return x
     return layers
 
@@ -142,9 +139,8 @@ class MyDataset(tk.data.Dataset):
         self.data_augmentation = data_augmentation
         if data_augmentation:
             self.aug1 = tk.image.Compose([
-                A.PadIfNeeded(40, 40, border_mode=cv2.BORDER_CONSTANT, value=[127, 127, 127], p=1),
-                tk.autoaugment.CIFAR10Policy(),
-                A.RandomCrop(32, 32),
+                tk.image.RandomTransform(width=32, height=32),
+                tk.image.RandomColorAugmentors(),
             ])
             self.aug2 = tk.image.RandomErasing()
         else:

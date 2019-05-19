@@ -3,6 +3,8 @@
 import argparse
 import pathlib
 
+import numpy as np
+
 import pytoolkit as tk
 
 NUM_CLASSES = 10
@@ -39,7 +41,7 @@ def train(args):
     callbacks.append(tk.callbacks.CosineAnnealing())
     tk.training.train(model, train_dataset, val_dataset,
                       batch_size=BATCH_SIZE, epochs=1800, callbacks=callbacks,
-                      mixup=True, validation_freq=0,
+                      validation_freq=0,
                       model_path=args.models_dir / 'model.h5')
 
 
@@ -139,21 +141,33 @@ class MyDataset(tk.data.Dataset):
         self.y = y
         self.input_shape = input_shape
         self.num_classes = num_classes
+        self.data_augmentation = data_augmentation
         if data_augmentation:
-            self.aug = tk.image.Compose([
+            self.aug1 = tk.image.Compose([
                 tk.image.RandomTransform(width=input_shape[1], height=input_shape[0]),
                 tk.image.RandomColorAugmentors(),
-                tk.image.RandomErasing(),
             ])
+            self.aug2 = tk.image.RandomErasing()
         else:
-            self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
+            self.aug1 = tk.image.Resize(width=input_shape[1], height=input_shape[0])
+            self.aug2 = None
 
     def __len__(self):
         return len(self.X)
 
     def __getitem__(self, index):
+        sample1 = self.get_sample(index)
+        if self.data_augmentation:
+            sample2 = self.get_sample(np.random.choice(len(self)))
+            X, y = tk.ndimage.mixup(sample1, sample2)
+            X = self.aug2(image=X)['image']
+        else:
+            X, y = sample1
+        return X, y
+
+    def get_sample(self, index):
         X = tk.ndimage.load(self.X[index])
-        X = self.aug(image=X)['image']
+        X = self.aug1(image=X)['image']
         y = tk.keras.utils.to_categorical(self.y[index], self.num_classes)
         return X, y
 
