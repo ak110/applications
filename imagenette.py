@@ -8,7 +8,7 @@ import numpy as np
 import pytoolkit as tk
 
 NUM_CLASSES = 10
-INPUT_SHAPE = (321, 321, 3)
+INPUT_SHAPE = (320, 320, 3)
 BATCH_SIZE = 16
 
 logger = tk.log.get(__name__)
@@ -94,7 +94,9 @@ def _down(filters, use_act=True):
     def layers(x):
         g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
         x = tk.keras.layers.multiply([x, g])
-        x = _conv2d(filters, strides=2, use_act=use_act)(x)
+        x = tk.keras.layers.MaxPooling2D(2, strides=1, padding='same')(x)
+        x = tk.layers.BlurPooling2D(taps=4)(x)
+        x = _conv2d(filters, use_act=use_act)(x)
         return x
     return layers
 
