@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""imagenetteの実験用コード。"""
+"""imagenetteの実験用コード。
+
+[INFO ] val_loss: 1.267
+[INFO ] val_acc:  0.810
+
+"""
 import argparse
 import pathlib
 
@@ -77,7 +82,7 @@ def create_model():
     x = _down(256, use_act=False)(x)  # 1/8
     x = _blocks(256, 4)(x)
     x = _down(512, use_act=False)(x)  # 1/16
-    x = _blocks(512, 8)(x)
+    x = _blocks(512, 4)(x)
     x = _down(512, use_act=False)(x)  # 1/32
     x = _blocks(512, 4)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
@@ -158,13 +163,14 @@ class MyDataset(tk.data.Dataset):
         return len(self.X)
 
     def __getitem__(self, index):
-        sample1 = self.get_sample(index)
         if self.data_augmentation:
-            sample2 = self.get_sample(np.random.choice(len(self)))
+            f = tk.threading.get_pool().submit(self.get_sample, np.random.choice(len(self)))
+            sample1 = self.get_sample(index)
+            sample2 = f.result()
             X, y = tk.ndimage.mixup(sample1, sample2)
             X = self.aug2(image=X)['image']
         else:
-            X, y = sample1
+            X, y = self.get_sample(index)
         return X, y
 
     def get_sample(self, index):

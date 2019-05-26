@@ -10,9 +10,9 @@
 
 実行結果:
 ```
-[INFO ] R^2:  0.142
-[INFO ] RMSE: 0.875 (base: 0.945)
-[INFO ] MAE:  0.637 (base: 0.709)
+[INFO ] R^2:  0.151
+[INFO ] RMSE: 0.871 (base: 0.945)
+[INFO ] MAE:  0.638 (base: 0.712)
 ```
 
 """
@@ -53,7 +53,7 @@ def train(args):
     """学習。"""
     tk.log.init(args.models_dir / f'train.log')
     train_dataset, val_dataset = load_data(args.data_dir)
-    model = create_model()
+    model = create_model(train_dataset.y.mean())
     callbacks = []
     callbacks.append(tk.callbacks.CosineAnnealing())
     tk.training.train(model, train_dataset, val_dataset,
@@ -61,7 +61,6 @@ def train(args):
                       model_path=args.models_dir / 'model.h5',
                       workers=8, data_parallel=False)
     pred = tk.models.predict(model, val_dataset, batch_size=BATCH_SIZE * 2, use_horovod=True)
-    pred = train_dataset.ss2.inverse_transform(pred)
     if tk.hvd.is_master():
         tk.ml.print_regression_metrics(val_dataset.y, pred)
 
@@ -69,10 +68,9 @@ def train(args):
 def validate(args, model=None):
     """検証。"""
     tk.log.init(args.models_dir / f'validate.log')
-    train_dataset, val_dataset = load_data(args.data_dir)
+    _, val_dataset = load_data(args.data_dir)
     model = model or tk.models.load(args.models_dir / 'model.h5')
     pred = tk.models.predict(model, val_dataset, batch_size=BATCH_SIZE * 2)
-    pred = train_dataset.ss2.inverse_transform(pred)
     tk.ml.print_regression_metrics(val_dataset.y, pred)
 
 
@@ -85,33 +83,43 @@ def load_data(data_dir):
     y_test = df_test['shares']
     X_test = df_test.drop('shares', axis=1)
 
-    ss1 = sklearn.preprocessing.StandardScaler()
-    ss2 = sklearn.preprocessing.StandardScaler()
-    ss1.fit(X_train)
-    ss2.fit(y_train.values.reshape(-1, 1))
+    ss = sklearn.preprocessing.StandardScaler()
+    ss.fit(X_train)
 
-    train_dataset = MyDataset(X_train.values, y_train.values, ss1, ss2, data_augmentation=True)
-    test_dataset = MyDataset(X_test.values, y_test.values, ss1, ss2)
+    train_dataset = MyDataset(X_train.values, y_train.values, ss, data_augmentation=True)
+    test_dataset = MyDataset(X_test.values, y_test.values, ss)
     return train_dataset, test_dataset
 
 
-def create_model():
+def create_model(bias=0):
     """モデルの作成。"""
     inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
-    x = tk.keras.layers.Dense(512,
+    x = tk.keras.layers.Dense(512, use_bias=False,
                               kernel_initializer='he_uniform',
                               kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-    x = tk.layers.MixFeat()(x)
+    x = tk.keras.layers.BatchNormalization(scale=False, center=False)(x)
+    for _ in range(3):
+        sc = x
+        x = tk.keras.layers.Dense(512, use_bias=False,
+                                  kernel_initializer='he_uniform',
+                                  kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        x = tk.keras.layers.BatchNormalization(scale=False)(x)
+        x = tk.keras.layers.Activation('elu')(x)
+        x = tk.keras.layers.Dropout(0.5)(x)
+        x = tk.keras.layers.Dense(512, use_bias=False,
+                                  kernel_initializer='he_uniform',
+                                  kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        x = tk.keras.layers.BatchNormalization(gamma_initializer='zeros', center=False)(x)
+        x = tk.keras.layers.add([sc, x])
+    x = tk.keras.layers.BatchNormalization(scale=False)(x)
     x = tk.keras.layers.Activation('elu')(x)
-    x = tk.keras.layers.Dense(512,
-                              kernel_initializer='he_uniform',
-                              kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-    x = tk.layers.MixFeat()(x)
-    x = tk.keras.layers.Activation('elu')(x)
-    x = tk.keras.layers.Dense(1, kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+    x = tk.keras.layers.Dropout(0.5)(x)
+    x = tk.keras.layers.Dense(1,
+                              kernel_regularizer=tk.keras.regularizers.l2(1e-4),
+                              bias_initializer=tk.keras.initializers.constant(bias))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
-    base_lr = 1e-5 * BATCH_SIZE * tk.hvd.get().size()
-    optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0)
+    base_lr = 3e-4 * BATCH_SIZE * tk.hvd.get().size()
+    optimizer = tk.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0)
     tk.models.compile(model, optimizer, 'mse', ['mae'])
     return model
 
@@ -119,13 +127,10 @@ def create_model():
 class MyDataset(tk.data.Dataset):
     """Dataset。"""
 
-    def __init__(self, X, y, ss1, ss2, data_augmentation=False):
+    def __init__(self, X, y, ss, data_augmentation=False):
         self.X = X
         self.y = y
-        self.X_tr = ss1.transform(X)
-        self.y_tr = ss2.transform(y.reshape(-1, 1))[:, 0]
-        self.ss1 = ss1
-        self.ss2 = ss2
+        self.X_tr = ss.transform(X)
         self.data_augmentation = data_augmentation
 
     def __len__(self):
@@ -141,7 +146,7 @@ class MyDataset(tk.data.Dataset):
         return X, y
 
     def get_sample(self, index):
-        return self.X_tr[index], self.y_tr[index]
+        return self.X_tr[index], self.y[index]
 
 
 if __name__ == '__main__':

@@ -4,6 +4,13 @@
 - 一番良かったモデル(ls_darknet53_coord_hcs): 0.871
 - 転移学習無しの最大(ls_scratch): 0.837
 
+[INFO ] val_loss: 0.950
+[INFO ] val_acc:  0.961
+[INFO ] val_iou:  0.492
+[INFO ] score:     0.843
+[INFO ] IoU mean:  0.834
+[INFO ] Acc empty: 0.930
+
 """
 import argparse
 import pathlib
@@ -45,7 +52,7 @@ def train(args):
     callbacks.append(tk.callbacks.CosineAnnealing())
     tk.training.train(model, train_dataset, val_dataset,
                       batch_size=BATCH_SIZE, epochs=600, callbacks=callbacks,
-                      mixup=False, validation_freq=30,
+                      validation_freq=30,
                       model_path=args.models_dir / 'model.h5')
     _evaluate(model, val_dataset)
 
@@ -62,10 +69,12 @@ def _evaluate(model, val_dataset):
     pred_val = tk.models.predict(model, val_dataset, batch_size=BATCH_SIZE * 2)
     if tk.hvd.is_master():
         # スコア表示
-        score = compute_score(np.int32(val_dataset.y > 127), np.int32(pred_val > 0.5))
+        score = compute_score(val_dataset.y, pred_val, 0.5)
         logger.info(f'score:     {score:.3f}')
         # オレオレ指標
         print_metrics(val_dataset.y > 127, pred_val > 0.5, print_fn=logger.info)
+        # 閾値探索
+        _, _ = tk.ml.search_threshold(val_dataset.y, pred_val, np.linspace(0.3, 0.7, 41), compute_score, 'maximize')
     tk.hvd.barrier()
 
 
@@ -96,14 +105,14 @@ def create_model():
     x = tk.keras.layers.concatenate([x, x, x])
     x = tk.layers.CoordChannel2D(x_channel=False)(x)
     x = _conv2d(64, 7, strides=1)(x)  # 112
-    x = _conv2d(128, strides=2, use_act=False)(x)  # 56
+    x = _down(128, use_act=False)(x)  # 56
     x = _blocks(128, 2)(x)
-    x = _conv2d(256, strides=2, use_act=False)(x)  # 28
+    x = _down(256, use_act=False)(x)  # 28
     x = _blocks(256, 4)(x)
     d = x
-    x = _conv2d(512, strides=2, use_act=False)(x)  # 14
+    x = _down(512, use_act=False)(x)  # 14
     x = _blocks(512, 8)(x)
-    x = _conv2d(512, strides=2, use_act=False)(x)  # 7
+    x = _down(512, use_act=False)(x)  # 7
     x = _blocks(512, 4)(x)
     x = _conv2d(128 * 4 * 4)(x)
     x = tk.layers.SubpixelConv2D(scale=4)(x)  # 28
@@ -114,18 +123,28 @@ def create_model():
     x = _conv2d(1 * 4 * 4, use_act=False)(x)
     x = tk.layers.SubpixelConv2D(scale=4)(x)  # 112
     x = tk.keras.layers.Cropping2D(((5, 6), (5, 6)))(x)  # 101
+    x = tk.keras.layers.Lambda(lambda x: x + tk.math.logit(0.01))(x)
     logits = x
     x = tk.keras.layers.Activation('sigmoid')(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
 
     def loss(y_true, y_pred):
         _ = y_pred
-        return tk.losses.lovasz_hinge(y_true, logits, from_logits=True)
+        return tk.losses.lovasz_binary_crossentropy(y_true, logits, from_logits=True)
 
     base_lr = 1e-3 * BATCH_SIZE * tk.hvd.get().size()
     optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0)
     tk.models.compile(model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou])
     return model
+
+
+def _down(filters, use_act=True):
+    def layers(x):
+        g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+        x = tk.keras.layers.multiply([x, g])
+        x = _conv2d(filters, 2, strides=2, use_act=use_act)(x)
+        return x
+    return layers
 
 
 def _blocks(filters, count):
@@ -162,8 +181,11 @@ def _bn_act(use_act=True, gamma_zero=False):
     return layers
 
 
-def compute_score(y_true, y_pred):
+def compute_score(y_true, y_pred, threshold):
     """スコア算出。"""
+    y_true = np.int32(y_true > 127)
+    y_pred = np.int32(y_pred > threshold)
+
     obj = np.any(y_true, axis=(1, 2, 3))
     empty = np.logical_not(obj)
     pred_empty = np.logical_not(np.any(y_pred, axis=(1, 2, 3)))

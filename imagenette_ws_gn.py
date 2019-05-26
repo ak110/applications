@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
-"""imagenetteの実験用コード。"""
+"""imagenetteの実験用コード。
+
+Weight Standalization + GroupNormalization。重いので普段は使わない。
+
+[INFO ] val_loss: 1.247
+[INFO ] val_acc:  0.815
+
+"""
 import argparse
 import pathlib
+
+import numpy as np
 
 import pytoolkit as tk
 
 NUM_CLASSES = 10
-INPUT_SHAPE = (321, 321, 3)
+INPUT_SHAPE = (320, 320, 3)
 BATCH_SIZE = 16
 
 logger = tk.log.get(__name__)
@@ -39,7 +48,7 @@ def train(args):
     callbacks.append(tk.callbacks.CosineAnnealing())
     tk.training.train(model, train_dataset, val_dataset,
                       batch_size=BATCH_SIZE, epochs=1800, callbacks=callbacks,
-                      mixup=True, validation_freq=0,
+                      validation_freq=0,
                       model_path=args.models_dir / 'model.h5')
 
 
@@ -75,7 +84,7 @@ def create_model():
     x = _down(256, use_act=False)(x)  # 1/8
     x = _blocks(256, 4)(x)
     x = _down(512, use_act=False)(x)  # 1/16
-    x = _blocks(512, 8)(x)
+    x = _blocks(512, 4)(x)
     x = _down(512, use_act=False)(x)  # 1/32
     x = _blocks(512, 4)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
@@ -92,7 +101,9 @@ def _down(filters, use_act=True):
     def layers(x):
         g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
         x = tk.keras.layers.multiply([x, g])
-        x = _conv2d(filters, strides=2, use_act=use_act)(x)
+        x = tk.keras.layers.MaxPooling2D(2, strides=1, padding='same')(x)
+        x = tk.layers.BlurPooling2D(taps=4)(x)
+        x = _conv2d(filters, use_act=use_act)(x)
         return x
     return layers
 
@@ -136,21 +147,34 @@ class MyDataset(tk.data.Dataset):
         self.y = y
         self.input_shape = input_shape
         self.num_classes = num_classes
+        self.data_augmentation = data_augmentation
         if data_augmentation:
-            self.aug = tk.image.Compose([
+            self.aug1 = tk.image.Compose([
                 tk.image.RandomTransform(width=input_shape[1], height=input_shape[0]),
                 tk.image.RandomColorAugmentors(),
-                tk.image.RandomErasing(),
             ])
+            self.aug2 = tk.image.RandomErasing()
         else:
-            self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
+            self.aug1 = tk.image.Resize(width=input_shape[1], height=input_shape[0])
+            self.aug2 = None
 
     def __len__(self):
         return len(self.X)
 
     def __getitem__(self, index):
+        if self.data_augmentation:
+            f = tk.threading.get_pool().submit(self.get_sample, np.random.choice(len(self)))
+            sample1 = self.get_sample(index)
+            sample2 = f.result()
+            X, y = tk.ndimage.mixup(sample1, sample2)
+            X = self.aug2(image=X)['image']
+        else:
+            X, y = self.get_sample(index)
+        return X, y
+
+    def get_sample(self, index):
         X = tk.ndimage.load(self.X[index])
-        X = self.aug(image=X)['image']
+        X = self.aug1(image=X)['image']
         y = tk.keras.utils.to_categorical(self.y[index], self.num_classes)
         return X, y
 
