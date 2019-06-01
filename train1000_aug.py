@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Train with 1000 (自作Augmentation)
 
-[INFO ] val_loss: 1.119
+[INFO ] val_loss: 1.045
 [INFO ] val_acc:  0.757
 
 …なんか低め。
 
 """
 import argparse
+import functools
 import pathlib
 
 import numpy as np
@@ -74,14 +75,51 @@ def load_data():
 
 def create_model():
     """モデルの作成。"""
+    conv2d = functools.partial(tk.keras.layers.Conv2D,
+                               kernel_size=3, padding='same', use_bias=False,
+                               kernel_initializer='he_uniform',
+                               kernel_regularizer=tk.keras.regularizers.l2(1e-4))
+    bn = functools.partial(tk.keras.layers.BatchNormalization,
+                           gamma_regularizer=tk.keras.regularizers.l2(1e-4))
+    act = functools.partial(tk.keras.layers.Activation, 'relu')
+
+    def down(filters):
+        def layers(x):
+            g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid',
+                                       kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+            x = tk.keras.layers.multiply([x, g])
+            x = tk.keras.layers.MaxPooling2D(2, strides=1, padding='same')(x)
+            x = tk.layers.BlurPooling2D(taps=4)(x)
+            x = conv2d(filters)(x)
+            x = bn()(x)
+            return x
+        return layers
+
+    def blocks(filters, count):
+        def layers(x):
+            for _ in range(count):
+                sc = x
+                x = conv2d(filters)(x)
+                x = bn()(x)
+                x = act()(x)
+                x = conv2d(filters)(x)
+                # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
+                x = bn(gamma_initializer='zeros')(x)
+                x = tk.keras.layers.add([sc, x])
+            x = bn()(x)
+            x = act()(x)
+            return x
+        return layers
+
     inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
     x = tk.layers.Preprocess(mode='tf')(x)
-    x = _conv2d(128, use_act=False)(x)
-    x = _blocks(128, 12)(x)
-    x = _down(256)(x)
-    x = _blocks(256, 12)(x)
-    x = _down(512)(x)
-    x = _blocks(512, 12)(x)
+    x = conv2d(128)(x)
+    x = bn()(x)
+    x = blocks(128, 8)(x)
+    x = down(256)(x)
+    x = blocks(256, 8)(x)
+    x = down(512)(x)
+    x = blocks(512, 8)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(NUM_CLASSES, activation='softmax',
                               kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
@@ -90,51 +128,6 @@ def create_model():
     optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True)
     tk.models.compile(model, optimizer, 'categorical_crossentropy', ['acc'])
     return model
-
-
-def _down(filters, use_act=True):
-    def layers(x):
-        g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-        x = tk.keras.layers.multiply([x, g])
-        x = tk.keras.layers.MaxPooling2D(2, strides=1, padding='same')(x)
-        x = tk.layers.BlurPooling2D(taps=4)(x)
-        x = _conv2d(filters, use_act=use_act)(x)
-        return x
-    return layers
-
-
-def _blocks(filters, count):
-    def layers(x):
-        for _ in range(count):
-            sc = x
-            x = _conv2d(filters)(x)
-            x = _conv2d(filters, use_act=False, gamma_zero=True)(x)
-            x = tk.keras.layers.add([sc, x])
-        x = _bn_act()(x)
-        return x
-    return layers
-
-
-def _conv2d(filters, kernel_size=3, strides=1, use_act=True, gamma_zero=False):
-    def layers(x):
-        x = tk.keras.layers.Conv2D(filters, kernel_size=kernel_size, strides=strides,
-                                   padding='same', use_bias=False,
-                                   kernel_initializer='he_uniform',
-                                   kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-        x = _bn_act(use_act=use_act, gamma_zero=gamma_zero)(x)
-        return x
-    return layers
-
-
-def _bn_act(use_act=True, gamma_zero=False):
-    def layers(x):
-        # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
-        x = tk.keras.layers.BatchNormalization(gamma_initializer='zeros' if gamma_zero else 'ones',
-                                               gamma_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-        x = tk.layers.MixFeat()(x)
-        x = tk.keras.layers.Activation('relu')(x) if use_act else x
-        return x
-    return layers
 
 
 class MyDataset(tk.data.Dataset):

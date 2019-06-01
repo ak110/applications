@@ -10,13 +10,15 @@
 
 実行結果:
 ```
-[INFO ] R^2:  0.151
-[INFO ] RMSE: 0.871 (base: 0.945)
-[INFO ] MAE:  0.638 (base: 0.712)
+[INFO ] R^2:      0.154
+[INFO ] RMSE:     0.869 (base: 0.945)
+[INFO ] MAE:      0.635 (base: 0.710)
+[INFO ] RMSE/MAE: 1.368
 ```
 
 """
 import argparse
+import functools
 import pathlib
 
 import numpy as np
@@ -93,26 +95,29 @@ def load_data(data_dir):
 
 def create_model(bias=0):
     """モデルの作成。"""
-    inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
-    x = tk.keras.layers.Dense(512, use_bias=False,
+    dense = functools.partial(tk.keras.layers.Dense,
+                              use_bias=False,
                               kernel_initializer='he_uniform',
-                              kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-    x = tk.keras.layers.BatchNormalization(scale=False, center=False)(x)
+                              kernel_regularizer=tk.keras.regularizers.l2(1e-4))
+    bn = functools.partial(tk.keras.layers.BatchNormalization,
+                           gamma_regularizer=tk.keras.regularizers.l2(1e-5))
+    act = functools.partial(tk.keras.layers.Activation, activation='elu')
+
+    inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
+    x = dense(512)(x)
     for _ in range(3):
         sc = x
-        x = tk.keras.layers.Dense(512, use_bias=False,
-                                  kernel_initializer='he_uniform',
-                                  kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-        x = tk.keras.layers.BatchNormalization(scale=False)(x)
-        x = tk.keras.layers.Activation('elu')(x)
+        x = bn()(x)
+        x = act()(x)
         x = tk.keras.layers.Dropout(0.5)(x)
-        x = tk.keras.layers.Dense(512, use_bias=False,
-                                  kernel_initializer='he_uniform',
-                                  kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-        x = tk.keras.layers.BatchNormalization(gamma_initializer='zeros', center=False)(x)
+        x = dense(512)(x)
+        x = bn()(x)
+        x = act()(x)
+        x = tk.keras.layers.Dropout(0.5)(x)
+        x = dense(512, kernel_initializer='zeros')(x)
         x = tk.keras.layers.add([sc, x])
-    x = tk.keras.layers.BatchNormalization(scale=False)(x)
-    x = tk.keras.layers.Activation('elu')(x)
+    x = bn()(x)
+    x = act()(x)
     x = tk.keras.layers.Dropout(0.5)(x)
     x = tk.keras.layers.Dense(1,
                               kernel_regularizer=tk.keras.regularizers.l2(1e-4),

@@ -2,17 +2,17 @@
 """TGS Salt Identification Challengeの実験用コード。
 
 - 一番良かったモデル(ls_darknet53_coord_hcs): 0.871
-- 転移学習無しの最大(ls_scratch): 0.837
 
-[INFO ] val_loss: 0.950
-[INFO ] val_acc:  0.961
-[INFO ] val_iou:  0.492
-[INFO ] score:     0.843
-[INFO ] IoU mean:  0.834
-[INFO ] Acc empty: 0.930
+[INFO ] val_loss: 0.489
+[INFO ] val_acc:  0.966
+[INFO ] val_iou:  0.499
+[INFO ] score:     0.860
+[INFO ] IoU mean:  0.845
+[INFO ] Acc empty: 0.945
 
 """
 import argparse
+import functools
 import pathlib
 
 import numpy as np
@@ -99,31 +99,72 @@ def load_data(data_dir):
 
 def create_model():
     """モデルの作成。"""
+    conv2d = functools.partial(tk.keras.layers.Conv2D,
+                               kernel_size=3, padding='same', use_bias=False,
+                               kernel_initializer='he_uniform',
+                               kernel_regularizer=tk.keras.regularizers.l2(1e-4))
+    bn = functools.partial(tk.keras.layers.BatchNormalization,
+                           gamma_regularizer=tk.keras.regularizers.l2(1e-4))
+    act = functools.partial(tk.keras.layers.Activation, 'relu')
+
+    def down(filters):
+        def layers(x):
+            g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid',
+                                       kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
+            x = tk.keras.layers.multiply([x, g])
+            x = tk.keras.layers.MaxPooling2D(2, strides=1, padding='same')(x)
+            x = tk.layers.BlurPooling2D(taps=4)(x)
+            x = conv2d(filters)(x)
+            x = bn()(x)
+            return x
+        return layers
+
+    def blocks(filters, count):
+        def layers(x):
+            for _ in range(count):
+                sc = x
+                x = conv2d(filters)(x)
+                x = bn()(x)
+                x = act()(x)
+                x = conv2d(filters)(x)
+                # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
+                x = bn(gamma_initializer='zeros')(x)
+                x = tk.keras.layers.add([sc, x])
+            x = bn()(x)
+            x = act()(x)
+            return x
+        return layers
+
     inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
     x = tk.layers.Preprocess(mode='tf')(x)
     x = tk.layers.Pad2D(((5, 6), (5, 6)), mode='reflect')(x)  # 112
     x = tk.keras.layers.concatenate([x, x, x])
     x = tk.layers.CoordChannel2D(x_channel=False)(x)
-    x = _conv2d(64, 7, strides=1)(x)  # 112
-    x = _down(128, use_act=False)(x)  # 56
-    x = _blocks(128, 2)(x)
-    x = _down(256, use_act=False)(x)  # 28
-    x = _blocks(256, 4)(x)
+    x = conv2d(64, kernel_size=7)(x)  # 112
+    x = bn()(x)
+    x = act()(x)
+    x = conv2d(128, kernel_size=2, strides=2)(x)  # 56
+    x = bn()(x)
+    x = blocks(128, 2)(x)
+    x = down(256)(x)  # 28
+    x = blocks(256, 4)(x)
     d = x
-    x = _down(512, use_act=False)(x)  # 14
-    x = _blocks(512, 8)(x)
-    x = _down(512, use_act=False)(x)  # 7
-    x = _blocks(512, 4)(x)
-    x = _conv2d(128 * 4 * 4)(x)
+    x = down(512)(x)  # 14
+    x = blocks(512, 4)(x)
+    x = down(512)(x)  # 7
+    x = blocks(512, 4)(x)
+    x = conv2d(128 * 4 * 4)(x)
+    x = bn()(x)
+    x = act()(x)
     x = tk.layers.SubpixelConv2D(scale=4)(x)  # 28
-    x = _conv2d(256, use_act=False)(x)
-    d = _conv2d(256, use_act=False)(d)
+    x = conv2d(256)(x)
+    x = bn()(x)
+    d = bn()(conv2d(256)(d))
     x = tk.keras.layers.add([x, d])
-    x = _blocks(256, 3)(x)
-    x = _conv2d(1 * 4 * 4, use_act=False)(x)
+    x = blocks(256, 3)(x)
+    x = conv2d(1 * 4 * 4, use_bias=True, bias_initializer=tk.keras.initializers.constant(tk.math.logit(0.01)))(x)
     x = tk.layers.SubpixelConv2D(scale=4)(x)  # 112
     x = tk.keras.layers.Cropping2D(((5, 6), (5, 6)))(x)  # 101
-    x = tk.keras.layers.Lambda(lambda x: x + tk.math.logit(0.01))(x)
     logits = x
     x = tk.keras.layers.Activation('sigmoid')(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
@@ -133,52 +174,9 @@ def create_model():
         return tk.losses.lovasz_binary_crossentropy(y_true, logits, from_logits=True)
 
     base_lr = 1e-3 * BATCH_SIZE * tk.hvd.get().size()
-    optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0)
+    optimizer = tk.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0)
     tk.models.compile(model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou])
     return model
-
-
-def _down(filters, use_act=True):
-    def layers(x):
-        g = tk.keras.layers.Conv2D(1, 3, padding='same', activation='sigmoid', kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-        x = tk.keras.layers.multiply([x, g])
-        x = _conv2d(filters, 2, strides=2, use_act=use_act)(x)
-        return x
-    return layers
-
-
-def _blocks(filters, count):
-    def layers(x):
-        for _ in range(count):
-            sc = x
-            x = _conv2d(filters)(x)
-            x = _conv2d(filters, use_act=False, gamma_zero=True)(x)
-            x = tk.keras.layers.add([sc, x])
-        x = _bn_act()(x)
-        return x
-    return layers
-
-
-def _conv2d(filters, kernel_size=3, strides=1, use_act=True, gamma_zero=False):
-    def layers(x):
-        x = tk.keras.layers.Conv2D(filters, kernel_size=kernel_size, strides=strides,
-                                   padding='same', use_bias=False,
-                                   kernel_initializer='he_uniform',
-                                   kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-        x = _bn_act(use_act=use_act, gamma_zero=gamma_zero)(x)
-        return x
-    return layers
-
-
-def _bn_act(use_act=True, gamma_zero=False):
-    def layers(x):
-        # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
-        x = tk.keras.layers.BatchNormalization(gamma_initializer='zeros' if gamma_zero else 'ones',
-                                               gamma_regularizer=tk.keras.regularizers.l2(1e-4))(x)
-        x = tk.layers.MixFeat()(x)
-        x = tk.keras.layers.Activation('relu')(x) if use_act else x
-        return x
-    return layers
 
 
 def compute_score(y_true, y_pred, threshold):
