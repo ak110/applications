@@ -37,7 +37,6 @@ def _main():
     tk.utils.better_exceptions()
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', default='train', choices=('check', 'train', 'validate'), nargs='?')
-    parser.add_argument('--data-dir', default=pathlib.Path(f'data/online_news_popularity'), type=pathlib.Path)
     parser.add_argument('--models-dir', default=pathlib.Path(f'models/{pathlib.Path(__file__).stem}'), type=pathlib.Path)
     args = parser.parse_args()
     with tk.dl.session(use_horovod=True):
@@ -54,7 +53,7 @@ def check(args):
 def train(args):
     """学習。"""
     tk.log.init(args.models_dir / f'train.log')
-    train_dataset, val_dataset = load_data(args.data_dir)
+    train_dataset, val_dataset = load_data()
     model = create_model(train_dataset.y.mean())
     callbacks = []
     callbacks.append(tk.callbacks.CosineAnnealing())
@@ -70,16 +69,16 @@ def train(args):
 def validate(args, model=None):
     """検証。"""
     tk.log.init(args.models_dir / f'validate.log')
-    _, val_dataset = load_data(args.data_dir)
+    _, val_dataset = load_data()
     model = model or tk.models.load(args.models_dir / 'model.h5')
     pred = tk.models.predict(model, val_dataset, batch_size=BATCH_SIZE * 2)
     tk.ml.print_regression_metrics(val_dataset.y, pred)
 
 
-def load_data(data_dir):
+def load_data():
     """データの読み込み。"""
-    df_train = pd.read_csv(data_dir / 'ONP_train.csv')
-    df_test = pd.read_csv(data_dir / 'ONP_test.csv')
+    df_train = pd.read_csv('https://github.com/ozt-ca/tjo.hatenablog.samples/raw/master/r_samples/public_lib/jp/exp_uci_datasets/online_news_popularity/ONP_train.csv')
+    df_test = pd.read_csv('https://github.com/ozt-ca/tjo.hatenablog.samples/raw/master/r_samples/public_lib/jp/exp_uci_datasets/online_news_popularity/ONP_test.csv')
     y_train = df_train['shares']
     X_train = df_train.drop('shares', axis=1)
     y_test = df_test['shares']

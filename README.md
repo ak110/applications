@@ -1,6 +1,6 @@
 # applications
 
-画像分類とか物体検出とかセグメンテーションとかの実験コード置き場。
+実験コード置き場。
 
 ## データの配置
 
@@ -9,5 +9,5 @@
     - imagenette
     - …
   - pytoolkit/
-  - ic_train.py
+  - aozora.py
   - …
