@@ -111,7 +111,6 @@ def create_model():
         return layers
 
     inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
-    x = tk.layers.Preprocess(mode='tf')(x)
     x = conv2d(64, kernel_size=8, strides=2)(x)  # 1/2
     x = bn()(x)
     x = act()(x)
@@ -144,32 +143,30 @@ class MyDataset(tk.data.Dataset):
         self.num_classes = num_classes
         self.data_augmentation = data_augmentation
         if data_augmentation:
-            self.aug1 = tk.image.Compose([
+            self.aug = tk.image.Compose([
                 tk.image.RandomTransform(width=input_shape[1], height=input_shape[0]),
                 tk.image.RandomColorAugmentors(),
             ])
-            self.aug2 = tk.image.RandomErasing()
         else:
-            self.aug1 = tk.image.Resize(width=input_shape[1], height=input_shape[0])
-            self.aug2 = None
+            self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
 
     def __len__(self):
         return len(self.X)
 
     def __getitem__(self, index):
-        if self.data_augmentation:
+        if self.data_augmentation and np.random.rand() <= 0.5:
             f = tk.threading.get_pool().submit(self.get_sample, np.random.choice(len(self)))
             sample1 = self.get_sample(index)
             sample2 = f.result()
-            X, y = tk.ndimage.mixup(sample1, sample2)
-            X = self.aug2(image=X)['image']
+            X, y = tk.ndimage.cut_mix(*sample1, *sample2)
         else:
             X, y = self.get_sample(index)
+        X = tk.ndimage.preprocess_tf(X)
         return X, y
 
     def get_sample(self, index):
         X = tk.ndimage.load(self.X[index])
-        X = self.aug1(image=X)['image']
+        X = self.aug(image=X)['image']
         y = tk.keras.utils.to_categorical(self.y[index], self.num_classes)
         return X, y
 
