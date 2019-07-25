@@ -125,7 +125,7 @@ def create_model():
                               kernel_regularizer=tk.keras.regularizers.l2(1e-4))(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
     base_lr = 1e-3 * BATCH_SIZE * tk.hvd.get().size()
-    optimizer = tk.optimizers.NSGD(lr=base_lr, momentum=0.9, nesterov=True)
+    optimizer = tk.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
     tk.models.compile(model, optimizer, 'categorical_crossentropy', ['acc'])
     return model
 
