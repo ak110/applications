@@ -112,7 +112,6 @@ def create_model():
         return layers
 
     inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
-    x = tk.layers.Preprocess(mode='tf')(x)
     x = conv2d(64, kernel_size=8, strides=2)(x)  # 1/2
     x = bn()(x)
     x = act()(x)
@@ -166,6 +165,7 @@ class MyDataset(tk.data.Dataset):
             X = self.aug2(image=X)['image']
         else:
             X, y = self.get_sample(index)
+        X = tk.ndimage.preprocess_tf(X)
         return X, y
 
     def get_sample(self, index):
