@@ -48,7 +48,6 @@ def train(args):
     callbacks.append(tk.callbacks.CosineAnnealing())
     tk.training.train(model, train_dataset, val_dataset,
                       batch_size=BATCH_SIZE, epochs=1800, callbacks=callbacks,
-                      validation_freq=0,
                       model_path=args.models_dir / 'model.h5')
 
 

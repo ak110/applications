@@ -52,7 +52,6 @@ def train(args):
     callbacks.append(tk.callbacks.CosineAnnealing())
     tk.training.train(model, train_dataset, val_dataset,
                       batch_size=BATCH_SIZE, epochs=600, callbacks=callbacks,
-                      validation_freq=30,
                       model_path=args.models_dir / 'model.h5')
     _evaluate(model, val_dataset)
 
@@ -136,34 +135,33 @@ def create_model():
         return layers
 
     inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
-    x = tk.layers.Preprocess(mode='tf')(x)
     x = tk.layers.Pad2D(((5, 6), (5, 6)), mode='reflect')(x)  # 112
     x = tk.keras.layers.concatenate([x, x, x])
     x = tk.layers.CoordChannel2D(x_channel=False)(x)
-    x = conv2d(64, kernel_size=7)(x)  # 112
+    x = conv2d(64, kernel_size=8)(x)
     x = bn()(x)
     x = act()(x)
-    x = conv2d(128, kernel_size=2, strides=2)(x)  # 56
+    x = conv2d(128, kernel_size=2, strides=2)(x)  # 1/2
     x = bn()(x)
     x = blocks(128, 2)(x)
-    x = down(256)(x)  # 28
+    x = down(256)(x)  # 1/4
     x = blocks(256, 4)(x)
     d = x
-    x = down(512)(x)  # 14
+    x = down(512)(x)  # 1/8
     x = blocks(512, 4)(x)
-    x = down(512)(x)  # 7
+    x = down(512)(x)  # 1/16
     x = blocks(512, 4)(x)
     x = conv2d(128 * 4 * 4)(x)
     x = bn()(x)
     x = act()(x)
-    x = tk.layers.SubpixelConv2D(scale=4)(x)  # 28
+    x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/4
     x = conv2d(256)(x)
     x = bn()(x)
     d = bn()(conv2d(256)(d))
     x = tk.keras.layers.add([x, d])
     x = blocks(256, 3)(x)
     x = conv2d(1 * 4 * 4, use_bias=True, bias_initializer=tk.keras.initializers.constant(tk.math.logit(0.01)))(x)
-    x = tk.layers.SubpixelConv2D(scale=4)(x)  # 112
+    x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/1
     x = tk.keras.layers.Cropping2D(((5, 6), (5, 6)))(x)  # 101
     logits = x
     x = tk.keras.layers.Activation('sigmoid')(x)
@@ -243,6 +241,7 @@ class MyDataset(tk.data.Dataset):
     def __getitem__(self, index):
         d = self.aug(image=self.X[index], mask=self.y[index])
         X = d['image']
+        X = tk.ndimage.preprocess_tf(X)
         y = d['mask'] / 255
         return X, y
 
