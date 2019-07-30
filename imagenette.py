@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。
 
-[INFO ] val_loss: 1.239
-[INFO ] val_acc:  0.813
+[INFO ] val_loss: 1.213
+[INFO ] val_acc:  0.821
 
 """
 import argparse
@@ -111,7 +111,12 @@ def create_model():
         return layers
 
     inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
-    x = conv2d(64, kernel_size=8, strides=2)(x)  # 1/2
+    x = tk.keras.layers.concatenate([  # 1/2
+        conv2d(16, kernel_size=2, strides=2)(x),
+        conv2d(16, kernel_size=4, strides=2)(x),
+        conv2d(16, kernel_size=6, strides=2)(x),
+        conv2d(16, kernel_size=8, strides=2)(x),
+    ])
     x = bn()(x)
     x = act()(x)
     x = conv2d(128, kernel_size=2, strides=2)(x)  # 1/4
