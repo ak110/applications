@@ -7,7 +7,6 @@
 AutoAugmentがなんかバグってそう。。
 
 """
-import argparse
 import functools
 import pathlib
 
@@ -17,82 +16,61 @@ import numpy as np
 
 import pytoolkit as tk
 
-NUM_CLASSES = 10
-INPUT_SHAPE = (32, 32, 3)
-BATCH_SIZE = 32
-
+num_classes = 10
+input_shape = (32, 32, 3)
+batch_size = 32
+models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
+app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
 
 
-def _main():
-    tk.utils.better_exceptions()
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "mode", default="train", choices=("check", "train", "validate"), nargs="?"
-    )
-    parser.add_argument(
-        "--models-dir",
-        default=pathlib.Path(f"models/{pathlib.Path(__file__).stem}"),
-        type=pathlib.Path,
-    )
-    args = parser.parse_args()
-    with tk.dl.session(use_horovod=True):
-        tk.utils.find_by_name([check, train, validate], args.mode)(args)
-
-
-def check(args):
-    """動作確認用コード。"""
-    tk.log.init(None)
+@app.command(logfile=False)
+@tk.dl.wrap_session()
+def check():
     model = create_model()
-    tk.training.check(model, plot_path=args.models_dir / "model.svg")
+    tk.training.check(model, plot_path=models_dir / "model.svg")
 
 
-def train(args):
-    """学習。"""
-    tk.log.init(args.models_dir / f"train.log")
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def train():
     train_dataset, val_dataset = load_data()
     model = create_model()
-    callbacks = []
-    callbacks.append(tk.callbacks.CosineAnnealing())
     tk.training.train(
         model,
         train_dataset,
         val_dataset,
-        batch_size=BATCH_SIZE,
+        train_preprocessor=MyPreprocessor(data_augmentation=True),
+        val_preprocessor=MyPreprocessor(),
+        batch_size=batch_size,
         epochs=1800,
-        callbacks=callbacks,
-        model_path=args.models_dir / "model.h5",
+        callbacks=[tk.callbacks.CosineAnnealing()],
+        model_path=models_dir / "model.h5",
     )
 
 
-def validate(args, model=None):
-    """検証。"""
-    tk.log.init(args.models_dir / f"validate.log")
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def validate(model=None):
     _, val_dataset = load_data()
-    model = model or tk.models.load(args.models_dir / "model.h5")
+    model = model or tk.models.load(models_dir / "model.h5")
     pred = tk.models.predict(
-        model, val_dataset, batch_size=BATCH_SIZE * 2, use_horovod=True
+        model, val_dataset, batch_size=batch_size * 2, use_horovod=True
     )
     if tk.hvd.is_master():
-        tk.ml.print_classification_metrics(val_dataset.y, pred)
+        tk.ml.print_classification_metrics(val_dataset.labels, pred)
 
 
 def load_data():
-    """データの読み込み。"""
     (X_train, y_train), (X_val, y_val) = tk.keras.datasets.cifar10.load_data()
     y_train = np.squeeze(y_train)
     y_val = np.squeeze(y_val)
-    num_classes = len(np.unique(y_train))
+    assert num_classes == len(np.unique(y_train))
     X_train, y_train = tk.ml.extract1000(X_train, y_train, num_classes=num_classes)
-    train_dataset = MyDataset(
-        X_train, y_train, INPUT_SHAPE, NUM_CLASSES, data_augmentation=True
-    )
-    val_dataset = MyDataset(X_val, y_val, INPUT_SHAPE, NUM_CLASSES)
-    return train_dataset, val_dataset
+    return tk.data.Dataset(X_train, y_train), tk.data.Dataset(X_val, y_val)
 
 
 def create_model():
-    """モデルの作成。"""
     conv2d = functools.partial(
         tk.keras.layers.Conv2D,
         kernel_size=3,
@@ -142,7 +120,7 @@ def create_model():
 
         return layers
 
-    inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
+    inputs = x = tk.keras.layers.Input(input_shape)
     x = tk.layers.Preprocess(mode="tf")(x)
     x = conv2d(128)(x)
     x = bn()(x)
@@ -153,27 +131,23 @@ def create_model():
     x = blocks(512, 8)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(
-        NUM_CLASSES,
+        num_classes,
         activation="softmax",
         kernel_regularizer=tk.keras.regularizers.l2(1e-4),
     )(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
-    base_lr = 1e-3 * BATCH_SIZE * tk.hvd.get().size()
+    base_lr = 1e-3 * batch_size * tk.hvd.size()
     optimizer = tk.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
     tk.models.compile(model, optimizer, "categorical_crossentropy", ["acc"])
     return model
 
 
-class MyDataset(tk.data.Dataset):
-    """Dataset。"""
+class MyPreprocessor(tk.data.Preprocessor):
+    """Preprocessor。"""
 
-    def __init__(self, X, y, input_shape, num_classes, data_augmentation=False):
-        self.X = X
-        self.y = y
-        self.input_shape = input_shape
-        self.num_classes = num_classes
+    def __init__(self, data_augmentation=False):
         self.data_augmentation = data_augmentation
-        if data_augmentation:
+        if self.data_augmentation:
             self.aug1 = tk.image.Compose(
                 [
                     A.PadIfNeeded(
@@ -192,24 +166,22 @@ class MyDataset(tk.data.Dataset):
             self.aug1 = tk.image.Compose([])
             self.aug2 = None
 
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, index):
-        sample1 = self.get_sample(index)
+    def get_sample(self, dataset, index):
+        sample1 = self._get_sample(dataset, index)
         if self.data_augmentation:
-            sample2 = self.get_sample(np.random.choice(len(self)))
+            sample2 = self._get_sample(dataset, np.random.choice(len(dataset)))
             X, y = tk.ndimage.mixup(sample1, sample2)
             X = self.aug2(image=X)["image"]
         else:
             X, y = sample1
         return X, y
 
-    def get_sample(self, index):
-        X = self.aug1(image=self.X[index])["image"]
-        y = tk.keras.utils.to_categorical(self.y[index], self.num_classes)
+    def _get_sample(self, dataset, index):
+        X, y = dataset.get_sample(index)
+        X = self.aug1(image=X)["image"]
+        y = tk.keras.utils.to_categorical(y, num_classes)
         return X, y
 
 
 if __name__ == "__main__":
-    _main()
+    app.run(default="train")

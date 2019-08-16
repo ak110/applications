@@ -7,7 +7,6 @@ Weight Standalization + GroupNormalization。重いので普段は使わない�
 [INFO ] val_acc:  0.823
 
 """
-import argparse
 import functools
 import pathlib
 
@@ -15,68 +14,52 @@ import numpy as np
 
 import pytoolkit as tk
 
-NUM_CLASSES = 10
-INPUT_SHAPE = (320, 320, 3)
-BATCH_SIZE = 16
-
+num_classes = 10
+input_shape = (320, 320, 3)
+batch_size = 16
+data_dir = pathlib.Path(f"data/imagenette")
+models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
+app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
 
 
-def _main():
-    tk.utils.better_exceptions()
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "mode", default="train", choices=("check", "train", "validate"), nargs="?"
-    )
-    parser.add_argument(
-        "--data-dir", default=pathlib.Path(f"data/imagenette"), type=pathlib.Path
-    )
-    parser.add_argument(
-        "--models-dir",
-        default=pathlib.Path(f"models/{pathlib.Path(__file__).stem}"),
-        type=pathlib.Path,
-    )
-    args = parser.parse_args()
-    with tk.dl.session(use_horovod=True):
-        tk.utils.find_by_name([check, train, validate], args.mode)(args)
-
-
-def check(args):
-    """動作確認用コード。"""
-    tk.log.init(None)
+@app.command(logfile=False)
+@tk.dl.wrap_session()
+def check():
     model = create_model()
-    tk.training.check(model, plot_path=args.models_dir / "model.svg")
+    tk.training.check(model, plot_path=models_dir / "model.svg")
 
 
-def train(args):
-    """学習。"""
-    tk.log.init(args.models_dir / f"train.log")
-    train_dataset, val_dataset = load_data(args.data_dir)
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def train():
+    train_dataset, val_dataset = load_data()
     model = create_model()
-    callbacks = []
-    callbacks.append(tk.callbacks.CosineAnnealing())
     tk.training.train(
         model,
         train_dataset,
         val_dataset,
-        batch_size=BATCH_SIZE,
+        train_preprocessor=MyPreprocessor(data_augmentation=True),
+        val_preprocessor=MyPreprocessor(),
+        batch_size=batch_size,
         epochs=1800,
-        callbacks=callbacks,
-        model_path=args.models_dir / "model.h5",
+        callbacks=[tk.callbacks.CosineAnnealing()],
+        model_path=models_dir / "model.h5",
     )
 
 
-def validate(args, model=None):
-    """検証。"""
-    tk.log.init(args.models_dir / f"validate.log")
-    _, val_dataset = load_data(args.data_dir)
-    model = model or tk.models.load(args.models_dir / "model.h5")
-    pred = tk.models.predict(model, val_dataset, batch_size=BATCH_SIZE * 2)
-    tk.ml.print_classification_metrics(val_dataset.y, pred)
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def validate(model=None):
+    _, val_dataset = load_data()
+    model = model or tk.models.load(models_dir / "model.h5")
+    pred = tk.models.predict(
+        model, val_dataset, batch_size=batch_size * 2, use_horovod=True
+    )
+    tk.ml.print_classification_metrics(val_dataset.labels, pred)
 
 
-def load_data(data_dir):
-    """データの読み込み。"""
+def load_data():
     class_names, X_train, y_train = tk.ml.listup_classification(data_dir / "train")
     _, X_val, y_val = tk.ml.listup_classification(
         data_dir / "val", class_names=class_names
@@ -85,15 +68,10 @@ def load_data(data_dir):
     # trainとvalを逆にしちゃう。
     (X_train, y_train), (X_val, y_val) = (X_val, y_val), (X_train, y_train)
 
-    train_dataset = MyDataset(
-        X_train, y_train, INPUT_SHAPE, NUM_CLASSES, data_augmentation=True
-    )
-    val_dataset = MyDataset(X_val, y_val, INPUT_SHAPE, NUM_CLASSES)
-    return train_dataset, val_dataset
+    return tk.data.Dataset(X_train, y_train), tk.data.Dataset(X_val, y_val)
 
 
 def create_model():
-    """モデルの作成。"""
     conv2d = functools.partial(tk.layers.WSConv2D, kernel_size=3)
     bn = functools.partial(
         tk.layers.GroupNormalization, gamma_regularizer=tk.keras.regularizers.l2(1e-4)
@@ -135,7 +113,7 @@ def create_model():
 
         return layers
 
-    inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
+    inputs = x = tk.keras.layers.Input(input_shape)
     x = tk.keras.layers.concatenate(
         [
             conv2d(16, kernel_size=2, strides=2)(x),
@@ -157,27 +135,23 @@ def create_model():
     x = blocks(512, 4)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     x = tk.keras.layers.Dense(
-        NUM_CLASSES,
+        num_classes,
         activation="softmax",
         kernel_regularizer=tk.keras.regularizers.l2(1e-4),
     )(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
-    base_lr = 1e-3 * BATCH_SIZE * tk.hvd.get().size()
+    base_lr = 1e-3 * batch_size * tk.hvd.size()
     optimizer = tk.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
     tk.models.compile(model, optimizer, "categorical_crossentropy", ["acc"])
     return model
 
 
-class MyDataset(tk.data.Dataset):
-    """Dataset。"""
+class MyPreprocessor(tk.data.Preprocessor):
+    """Preprocessor。"""
 
-    def __init__(self, X, y, input_shape, num_classes, data_augmentation=False):
-        self.X = X
-        self.y = y
-        self.input_shape = input_shape
-        self.num_classes = num_classes
+    def __init__(self, data_augmentation=False):
         self.data_augmentation = data_augmentation
-        if data_augmentation:
+        if self.data_augmentation:
             self.aug1 = tk.image.Compose(
                 [
                     tk.image.RandomTransform(
@@ -191,29 +165,28 @@ class MyDataset(tk.data.Dataset):
             self.aug1 = tk.image.Resize(width=input_shape[1], height=input_shape[0])
             self.aug2 = None
 
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, index):
+    def get_sample(self, dataset, index):
         if self.data_augmentation:
             f = tk.threading.get_pool().submit(
-                self.get_sample, np.random.choice(len(self))
+                lambda index: self._get_sample(dataset, index),
+                np.random.choice(len(dataset)),
             )
-            sample1 = self.get_sample(index)
+            sample1 = self._get_sample(dataset, index)
             sample2 = f.result()
             X, y = tk.ndimage.mixup(sample1, sample2)
             X = self.aug2(image=X)["image"]
         else:
-            X, y = self.get_sample(index)
+            X, y = self._get_sample(dataset, index)
         X = tk.ndimage.preprocess_tf(X)
         return X, y
 
-    def get_sample(self, index):
-        X = tk.ndimage.load(self.X[index])
+    def _get_sample(self, dataset, index):
+        X, y = dataset.get_sample(index)
+        X = tk.ndimage.load(X)
         X = self.aug1(image=X)["image"]
-        y = tk.keras.utils.to_categorical(self.y[index], self.num_classes)
+        y = tk.keras.utils.to_categorical(y, num_classes)
         return X, y
 
 
 if __name__ == "__main__":
-    _main()
+    app.run(default="train")

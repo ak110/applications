@@ -22,7 +22,6 @@ Rec:  0.86312
 ```
 
 """
-import argparse
 import pathlib
 
 import numpy as np
@@ -30,72 +29,58 @@ import pandas as pd
 
 import pytoolkit as tk
 
-INPUT_SHAPE = (512,)
-BATCH_SIZE = 32
-NUM_CLASSES = 8
-
+input_shape = (512,)
+batch_size = 32
+num_classes = 8
+models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
+app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
 
 
-def _main():
-    tk.utils.better_exceptions()
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "mode", default="train", choices=("check", "train", "validate"), nargs="?"
-    )
-    parser.add_argument(
-        "--models-dir",
-        default=pathlib.Path(f"models/{pathlib.Path(__file__).stem}"),
-        type=pathlib.Path,
-    )
-    args = parser.parse_args()
-    with tk.dl.session(use_horovod=True):
-        tk.utils.find_by_name([check, train, validate], args.mode)(args)
-
-
-def check(args):
-    """動作確認用コード。"""
-    tk.log.init(None)
+@app.command(logfile=False)
+@tk.dl.wrap_session()
+def check():
     model = create_model()
-    tk.training.check(model, plot_path=args.models_dir / "model.svg")
+    tk.training.check(model, plot_path=models_dir / "model.svg")
 
 
-def train(args):
-    """学習。"""
-    tk.log.init(args.models_dir / f"train.log")
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def train():
     train_dataset, val_dataset = load_data()
     model = create_model()
-    callbacks = []
-    callbacks.append(tk.callbacks.CosineAnnealing())
     tk.training.train(
         model,
         train_dataset,
         val_dataset,
-        batch_size=BATCH_SIZE,
+        train_preprocessor=MyPreprocessor(data_augmentation=True),
+        val_preprocessor=MyPreprocessor(),
+        batch_size=batch_size,
         epochs=20,
-        callbacks=callbacks,
-        model_path=args.models_dir / "model.h5",
+        callbacks=[tk.callbacks.CosineAnnealing()],
+        model_path=models_dir / "model.h5",
         workers=8,
         data_parallel=False,
     )
     pred = tk.models.predict(
-        model, val_dataset, batch_size=BATCH_SIZE * 2, use_horovod=True
+        model, val_dataset, batch_size=batch_size * 2, use_horovod=True
     )
     if tk.hvd.is_master():
-        tk.ml.print_classification_metrics(val_dataset.y, pred)
+        tk.ml.print_classification_metrics(val_dataset.labels, pred)
 
 
-def validate(args, model=None):
-    """検証。"""
-    tk.log.init(args.models_dir / f"validate.log")
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def validate(model=None):
     _, val_dataset = load_data()
-    model = model or tk.models.load(args.models_dir / "model.h5")
-    pred = tk.models.predict(model, val_dataset, batch_size=BATCH_SIZE * 2)
-    tk.ml.print_classification_metrics(val_dataset.y, pred)
+    model = model or tk.models.load(models_dir / "model.h5")
+    pred = tk.models.predict(
+        model, val_dataset, batch_size=batch_size * 2, use_horovod=True
+    )
+    tk.ml.print_classification_metrics(val_dataset.labels, pred)
 
 
 def load_data():
-    """データの読み込み。"""
     df_train = pd.read_csv(
         "https://raw.githubusercontent.com/ozt-ca/tjo.hatenablog.samples/master/r_samples/public_lib/jp/aozora/aozora_8writers_train.csv",
         header=None,
@@ -108,7 +93,7 @@ def load_data():
     )
 
     class_names = list(sorted(np.unique(df_train["class"].values)))
-    assert len(class_names) == NUM_CLASSES
+    assert len(class_names) == num_classes
     class_to_id = np.vectorize({c: i for i, c in enumerate(class_names)}.__getitem__)
 
     X_train = df_train["text"].values
@@ -116,22 +101,17 @@ def load_data():
     X_test = df_test["text"].values
     y_test = class_to_id(df_test["class"].values)
 
-    train_dataset = MyDataset(
-        X_train, y_train, NUM_CLASSES, INPUT_SHAPE, data_augmentation=True
-    )
-    test_dataset = MyDataset(X_test, y_test, NUM_CLASSES, INPUT_SHAPE)
-    return train_dataset, test_dataset
+    return tk.data.Dataset(X_train, y_train), tk.data.Dataset(X_test, y_test)
 
 
 def create_model():
-    """モデルの作成。"""
-    inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
+    inputs = x = tk.keras.layers.Input(input_shape)
     x = tk.keras.layers.Embedding(65536, 256, mask_zero=True)(x)
     x1 = tk.keras.layers.GlobalAveragePooling1D()(x)
     x2 = tk.keras.layers.GlobalMaxPooling1D()(tk.layers.RemoveMask()(x))
     x = tk.keras.layers.concatenate([x1, x2])
     x = tk.keras.layers.Dense(
-        NUM_CLASSES,
+        num_classes,
         kernel_regularizer=tk.keras.regularizers.l2(1e-4),
         activation="softmax",
     )(x)
@@ -140,27 +120,19 @@ def create_model():
     return model
 
 
-class MyDataset(tk.data.Dataset):
-    """Dataset。"""
+class MyPreprocessor(tk.data.Preprocessor):
+    """Preprocessor。"""
 
-    def __init__(self, X, y, num_classes, input_shape, data_augmentation=False):
-        self.X = X
-        self.y = y
-        self.num_classes = num_classes
-        self.input_shape = input_shape
+    def __init__(self, data_augmentation=False):
         self.data_augmentation = data_augmentation
 
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, index):
-        X = np.frombuffer(
-            self.X[index].replace(" ", "").encode("utf-16-le"), dtype=np.uint16
-        )
-        X = tk.keras.preprocessing.sequence.pad_sequences([X], self.input_shape[0])[0]
-        y = tk.keras.utils.to_categorical(self.y[index], self.num_classes)
+    def get_sample(self, dataset, index):
+        X, y = dataset.get_sample(index)
+        X = np.frombuffer(X.replace(" ", "").encode("utf-16-le"), dtype=np.uint16)
+        X = tk.keras.preprocessing.sequence.pad_sequences([X], input_shape[0])[0]
+        y = tk.keras.utils.to_categorical(y, num_classes)
         return X, y
 
 
 if __name__ == "__main__":
-    _main()
+    app.run(default="train")

@@ -11,7 +11,6 @@
 [INFO ] Acc empty: 0.945
 
 """
-import argparse
 import functools
 import pathlib
 
@@ -19,76 +18,61 @@ import numpy as np
 
 import pytoolkit as tk
 
-INPUT_SHAPE = (101, 101, 1)
-BATCH_SIZE = 16
-
+input_shape = (101, 101, 1)
+batch_size = 16
+data_dir = pathlib.Path(f"data/imagenette")
+models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
+app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
 
 
-def _main():
-    tk.utils.better_exceptions()
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "mode", default="train", choices=("check", "train", "validate"), nargs="?"
-    )
-    parser.add_argument(
-        "--data-dir", default=pathlib.Path(f"data/kaggle_salt"), type=pathlib.Path
-    )
-    parser.add_argument(
-        "--models-dir",
-        default=pathlib.Path(f"models/{pathlib.Path(__file__).stem}"),
-        type=pathlib.Path,
-    )
-    args = parser.parse_args()
-    with tk.dl.session(use_horovod=True):
-        tk.utils.find_by_name([check, train, validate], args.mode)(args)
-
-
-def check(args):
-    """動作確認用コード。"""
-    tk.log.init(None)
+@app.command(logfile=False)
+@tk.dl.wrap_session()
+def check():
     model = create_model()
-    tk.training.check(model, plot_path=args.models_dir / "model.svg")
+    tk.training.check(model, plot_path=models_dir / "model.svg")
 
 
-def train(args):
-    """学習。"""
-    tk.log.init(args.models_dir / f"train.log")
-    train_dataset, val_dataset = load_data(args.data_dir)
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def train():
+    train_dataset, val_dataset = load_data()
     model = create_model()
-    callbacks = []
-    callbacks.append(tk.callbacks.CosineAnnealing())
     tk.training.train(
         model,
         train_dataset,
         val_dataset,
-        batch_size=BATCH_SIZE,
+        train_preprocessor=MyPreprocessor(data_augmentation=True),
+        val_preprocessor=MyPreprocessor(),
+        batch_size=batch_size,
         epochs=600,
-        callbacks=callbacks,
-        model_path=args.models_dir / "model.h5",
+        callbacks=[tk.callbacks.CosineAnnealing()],
+        model_path=models_dir / "model.h5",
     )
     _evaluate(model, val_dataset)
 
 
-def validate(args, model=None):
-    """検証。"""
-    tk.log.init(args.models_dir / f"validate.log")
-    _, val_dataset = load_data(args.data_dir)
-    model = model or tk.models.load(args.models_dir / "model.h5")
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def validate(model=None):
+    _, val_dataset = load_data()
+    model = model or tk.models.load(models_dir / "model.h5")
     _evaluate(model, val_dataset)
 
 
 def _evaluate(model, val_dataset):
-    pred_val = tk.models.predict(model, val_dataset, batch_size=BATCH_SIZE * 2)
+    pred_val = tk.models.predict(
+        model, val_dataset, batch_size=batch_size * 2, use_horovod=True
+    )
     if tk.hvd.is_master():
         # スコア表示
-        score = compute_score(val_dataset.y, pred_val, 0.5)
+        score = compute_score(val_dataset.labels, pred_val, 0.5)
         logger.info(f"score:     {score:.3f}")
         # オレオレ指標
-        print_metrics(val_dataset.y > 127, pred_val > 0.5, print_fn=logger.info)
+        print_metrics(val_dataset.labels > 127, pred_val > 0.5, print_fn=logger.info)
         # 閾値探索
         _, _ = tk.ml.search_threshold(
-            val_dataset.y,
+            val_dataset.labels,
             pred_val,
             np.linspace(0.3, 0.7, 41),
             compute_score,
@@ -97,8 +81,7 @@ def _evaluate(model, val_dataset):
     tk.hvd.barrier()
 
 
-def load_data(data_dir):
-    """データの読み込み。"""
+def load_data():
     import pandas as pd
 
     def _load_image(X):
@@ -115,13 +98,10 @@ def load_data(data_dir):
     )
     (X_train, y_train), (X_val, y_val) = (X[ti], y[ti]), (X[vi], y[vi])
 
-    train_dataset = MyDataset(X_train, y_train, INPUT_SHAPE, data_augmentation=True)
-    val_dataset = MyDataset(X_val, y_val, INPUT_SHAPE)
-    return train_dataset, val_dataset
+    return tk.data.Dataset(X_train, y_train), tk.data.Dataset(X_val, y_val)
 
 
 def create_model():
-    """モデルの作成。"""
     conv2d = functools.partial(
         tk.keras.layers.Conv2D,
         kernel_size=3,
@@ -171,7 +151,7 @@ def create_model():
 
         return layers
 
-    inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
+    inputs = x = tk.keras.layers.Input(input_shape)
     x = tk.layers.Pad2D(((5, 6), (5, 6)), mode="reflect")(x)  # 112
     x = tk.keras.layers.concatenate([x, x, x])
     x = tk.layers.CoordChannel2D(x_channel=False)(x)
@@ -212,7 +192,7 @@ def create_model():
         _ = y_pred
         return tk.losses.lovasz_binary_crossentropy(y_true, logits, from_logits=True)
 
-    base_lr = 1e-3 * BATCH_SIZE * tk.hvd.get().size()
+    base_lr = 1e-3 * batch_size * tk.hvd.size()
     optimizer = tk.keras.optimizers.SGD(
         lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
     )
@@ -237,8 +217,8 @@ def compute_score(y_true, y_pred, threshold):
     iou = inter / np.maximum(union, 1)
 
     prec_list = []
-    for threshold in np.arange(0.5, 1.0, 0.05):
-        pred_obj = iou > threshold
+    for th in np.arange(0.5, 1.0, 0.05):
+        pred_obj = iou > th
         match = np.logical_and(obj, pred_obj) + tn
         prec_list.append(np.sum(match) / len(y_true))
     return np.mean(prec_list)
@@ -262,14 +242,12 @@ def print_metrics(y_true, y_pred, print_fn):
     print_fn(f"Acc empty: {acc_empty:.3f}")
 
 
-class MyDataset(tk.data.Dataset):
-    """Dataset。"""
+class MyPreprocessor(tk.data.Preprocessor):
+    """Preprocessor。"""
 
-    def __init__(self, X, y, input_shape, data_augmentation=False):
-        self.X = X
-        self.y = y
-        self.input_shape = input_shape
-        if data_augmentation:
+    def __init__(self, data_augmentation=False):
+        self.data_augmentation = data_augmentation
+        if self.data_augmentation:
             self.aug = tk.image.Compose(
                 [
                     tk.image.RandomTransform(
@@ -284,16 +262,13 @@ class MyDataset(tk.data.Dataset):
         else:
             self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
 
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, index):
-        d = self.aug(image=self.X[index], mask=self.y[index])
-        X = d["image"]
-        X = tk.ndimage.preprocess_tf(X)
+    def get_sample(self, dataset, index):
+        X, y = dataset.get_sample(index)
+        d = self.aug(image=X, mask=y)
+        X = tk.ndimage.preprocess_tf(d["image"])
         y = d["mask"] / 255
         return X, y
 
 
 if __name__ == "__main__":
-    _main()
+    app.run(default="train")

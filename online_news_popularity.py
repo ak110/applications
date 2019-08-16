@@ -17,7 +17,6 @@
 ```
 
 """
-import argparse
 import functools
 import pathlib
 
@@ -27,71 +26,57 @@ import sklearn.preprocessing
 
 import pytoolkit as tk
 
-INPUT_SHAPE = (58,)
-BATCH_SIZE = 256
-
+input_shape = (58,)
+batch_size = 256
+models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
+app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
 
 
-def _main():
-    tk.utils.better_exceptions()
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "mode", default="train", choices=("check", "train", "validate"), nargs="?"
-    )
-    parser.add_argument(
-        "--models-dir",
-        default=pathlib.Path(f"models/{pathlib.Path(__file__).stem}"),
-        type=pathlib.Path,
-    )
-    args = parser.parse_args()
-    with tk.dl.session(use_horovod=True):
-        tk.utils.find_by_name([check, train, validate], args.mode)(args)
-
-
-def check(args):
-    """動作確認用コード。"""
-    tk.log.init(None)
+@app.command(logfile=False)
+@tk.dl.wrap_session()
+def check():
     model = create_model()
-    tk.training.check(model, plot_path=args.models_dir / "model.svg")
+    tk.training.check(model, plot_path=models_dir / "model.svg")
 
 
-def train(args):
-    """学習。"""
-    tk.log.init(args.models_dir / f"train.log")
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def train():
     train_dataset, val_dataset = load_data()
-    model = create_model(train_dataset.y.mean())
-    callbacks = []
-    callbacks.append(tk.callbacks.CosineAnnealing())
+    model = create_model(train_dataset.labels.mean())
     tk.training.train(
         model,
         train_dataset,
         val_dataset,
-        batch_size=BATCH_SIZE,
+        train_preprocessor=MyPreprocessor(data_augmentation=True),
+        val_preprocessor=MyPreprocessor(),
+        batch_size=batch_size,
         epochs=100,
-        callbacks=callbacks,
-        model_path=args.models_dir / "model.h5",
+        callbacks=[tk.callbacks.CosineAnnealing()],
+        model_path=models_dir / "model.h5",
         workers=8,
         data_parallel=False,
     )
     pred = tk.models.predict(
-        model, val_dataset, batch_size=BATCH_SIZE * 2, use_horovod=True
+        model, val_dataset, batch_size=batch_size * 2, use_horovod=True
     )
     if tk.hvd.is_master():
-        tk.ml.print_regression_metrics(val_dataset.y, pred)
+        tk.ml.print_regression_metrics(val_dataset.labels, pred)
 
 
-def validate(args, model=None):
-    """検証。"""
-    tk.log.init(args.models_dir / f"validate.log")
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def validate(model=None):
     _, val_dataset = load_data()
-    model = model or tk.models.load(args.models_dir / "model.h5")
-    pred = tk.models.predict(model, val_dataset, batch_size=BATCH_SIZE * 2)
-    tk.ml.print_regression_metrics(val_dataset.y, pred)
+    model = model or tk.models.load(models_dir / "model.h5")
+    pred = tk.models.predict(
+        model, val_dataset, batch_size=batch_size * 2, use_horovod=True
+    )
+    tk.ml.print_regression_metrics(val_dataset.labels, pred)
 
 
 def load_data():
-    """データの読み込み。"""
     df_train = pd.read_csv(
         "https://github.com/ozt-ca/tjo.hatenablog.samples/raw/master/r_samples/public_lib/jp/exp_uci_datasets/online_news_popularity/ONP_train.csv"
     )
@@ -104,17 +89,13 @@ def load_data():
     X_test = df_test.drop("shares", axis=1)
 
     ss = sklearn.preprocessing.StandardScaler()
-    ss.fit(X_train)
+    X_train = ss.fit_transform(X_train.values)
+    X_test = ss.transform(X_test.values)
 
-    train_dataset = MyDataset(
-        X_train.values, y_train.values, ss, data_augmentation=True
-    )
-    test_dataset = MyDataset(X_test.values, y_test.values, ss)
-    return train_dataset, test_dataset
+    return tk.data.Dataset(X_train, y_train), tk.data.Dataset(X_test, y_test)
 
 
 def create_model(bias=0):
-    """モデルの作成。"""
     dense = functools.partial(
         tk.keras.layers.Dense,
         use_bias=False,
@@ -127,7 +108,7 @@ def create_model(bias=0):
     )
     act = functools.partial(tk.keras.layers.Activation, activation="elu")
 
-    inputs = x = tk.keras.layers.Input(INPUT_SHAPE)
+    inputs = x = tk.keras.layers.Input(input_shape)
     x = dense(512)(x)
     for _ in range(3):
         sc = x
@@ -149,7 +130,7 @@ def create_model(bias=0):
         bias_initializer=tk.keras.initializers.constant(bias),
     )(x)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
-    base_lr = 3e-4 * BATCH_SIZE * tk.hvd.get().size()
+    base_lr = 3e-4 * batch_size * tk.hvd.size()
     optimizer = tk.keras.optimizers.SGD(
         lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
     )
@@ -157,30 +138,21 @@ def create_model(bias=0):
     return model
 
 
-class MyDataset(tk.data.Dataset):
-    """Dataset。"""
+class MyPreprocessor(tk.data.Preprocessor):
+    """Preprocessor。"""
 
-    def __init__(self, X, y, ss, data_augmentation=False):
-        self.X = X
-        self.y = y
-        self.X_tr = ss.transform(X)
+    def __init__(self, data_augmentation=False):
         self.data_augmentation = data_augmentation
 
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, index):
-        sample1 = self.get_sample(index)
+    def get_sample(self, dataset, index):
+        sample1 = dataset.get_sample(index)
         if self.data_augmentation:
-            sample2 = self.get_sample(np.random.choice(len(self)))
+            sample2 = dataset.get_sample(np.random.choice(len(dataset)))
             X, y = tk.ndimage.mixup(sample1, sample2, mode="uniform_ex")
         else:
             X, y = sample1
         return X, y
 
-    def get_sample(self, index):
-        return self.X_tr[index], self.y[index]
-
 
 if __name__ == "__main__":
-    _main()
+    app.run(default="train")
