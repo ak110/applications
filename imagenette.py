@@ -52,9 +52,62 @@ def validate(model=None):
     _, val_dataset = load_data()
     model = model or tk.models.load(models_dir / "model.h5")
     pred = tk.models.predict(
-        model, val_dataset, batch_size=batch_size * 2, use_horovod=True
+        model,
+        val_dataset,
+        MyPreprocessor(),
+        batch_size=batch_size * 2,
+        use_horovod=True,
     )
     tk.ml.print_classification_metrics(val_dataset.labels, pred)
+
+
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def ml():
+    """metric learningお試しコード"""
+    train_dataset, val_dataset = load_data()
+    model = tk.models.load(models_dir / "model.h5")
+
+    assert isinstance(
+        model.layers[-2], tk.keras.layers.GlobalAveragePooling2D
+    ), f"layer error: {model.layers[-2]}"
+    model = tk.keras.models.Model(model.inputs, model.layers[-2].output)
+
+    train_dataset.data = tk.models.predict(
+        model,
+        train_dataset,
+        MyPreprocessor(),
+        batch_size=batch_size * 2,
+        use_horovod=True,
+    )
+    val_dataset.data = tk.models.predict(
+        model,
+        val_dataset,
+        MyPreprocessor(),
+        batch_size=batch_size * 2,
+        use_horovod=True,
+    )
+    logger.info("samples_per_class, acc")
+    for samples_per_class in [1, 2, 4, 8, 16, 32, 50]:
+        ref_dataset = extract(train_dataset, num_classes, samples_per_class)
+
+        import sklearn.metrics.pairwise
+
+        cs = sklearn.metrics.pairwise.cosine_similarity(
+            val_dataset.data, ref_dataset.data
+        )
+        pred = ref_dataset.labels[cs.argmax(axis=-1)]
+        acc = np.mean(val_dataset.labels == pred)
+
+        logger.info(f"{samples_per_class}, {acc * 100:.1f}")
+
+
+def extract(dataset, num_classes, samples_per_class):
+    """クラスごとに均等に抜き出す。"""
+    index_list = []
+    for c in range(num_classes):
+        index_list.extend(np.where(dataset.labels == c)[0][:samples_per_class])
+    return dataset.slice(index_list)
 
 
 def load_data():
@@ -171,7 +224,9 @@ class MyPreprocessor(tk.data.Preprocessor):
             self.aug1 = tk.image.Resize(width=input_shape[1], height=input_shape[0])
             self.aug2 = None
 
-    def get_sample(self, dataset, index):
+    def get_sample(
+        self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
+    ):
         if self.data_augmentation:
             f = tk.threading.get_pool().submit(
                 lambda index: self._get_sample(dataset, index),

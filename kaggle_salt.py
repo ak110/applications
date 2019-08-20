@@ -20,7 +20,7 @@ import pytoolkit as tk
 
 input_shape = (101, 101, 1)
 batch_size = 16
-data_dir = pathlib.Path(f"data/imagenette")
+data_dir = pathlib.Path(f"data/kaggle_salt")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
 app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
@@ -62,7 +62,11 @@ def validate(model=None):
 
 def _evaluate(model, val_dataset):
     pred_val = tk.models.predict(
-        model, val_dataset, batch_size=batch_size * 2, use_horovod=True
+        model,
+        val_dataset,
+        MyPreprocessor(),
+        batch_size=batch_size * 2,
+        use_horovod=True,
     )
     if tk.hvd.is_master():
         # スコア表示
@@ -190,7 +194,7 @@ def create_model():
 
     def loss(y_true, y_pred):
         _ = y_pred
-        return tk.losses.lovasz_binary_crossentropy(y_true, logits, from_logits=True)
+        return tk.losses.lovasz_hinge(y_true, logits, from_logits=True)
 
     base_lr = 1e-3 * batch_size * tk.hvd.size()
     optimizer = tk.keras.optimizers.SGD(
@@ -262,7 +266,9 @@ class MyPreprocessor(tk.data.Preprocessor):
         else:
             self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
 
-    def get_sample(self, dataset, index):
+    def get_sample(
+        self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
+    ):
         X, y = dataset.get_sample(index)
         d = self.aug(image=X, mask=y)
         X = tk.ndimage.preprocess_tf(d["image"])

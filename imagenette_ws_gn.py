@@ -54,7 +54,11 @@ def validate(model=None):
     _, val_dataset = load_data()
     model = model or tk.models.load(models_dir / "model.h5")
     pred = tk.models.predict(
-        model, val_dataset, batch_size=batch_size * 2, use_horovod=True
+        model,
+        val_dataset,
+        MyPreprocessor(),
+        batch_size=batch_size * 2,
+        use_horovod=True,
     )
     tk.ml.print_classification_metrics(val_dataset.labels, pred)
 
@@ -165,7 +169,9 @@ class MyPreprocessor(tk.data.Preprocessor):
             self.aug1 = tk.image.Resize(width=input_shape[1], height=input_shape[0])
             self.aug2 = None
 
-    def get_sample(self, dataset, index):
+    def get_sample(
+        self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
+    ):
         if self.data_augmentation:
             f = tk.threading.get_pool().submit(
                 lambda index: self._get_sample(dataset, index),
