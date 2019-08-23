@@ -37,8 +37,8 @@ def train():
     model = create_model()
     tk.training.train(
         model,
-        train_dataset,
-        val_dataset,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
         train_preprocessor=MyPreprocessor(data_augmentation=True),
         val_preprocessor=MyPreprocessor(),
         batch_size=batch_size,

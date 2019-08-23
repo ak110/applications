@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。
 
-[INFO ] val_loss: 1.213
-[INFO ] val_acc:  0.821
+[INFO ] val_loss: 1.764
+[INFO ] val_acc:  0.833
 
 """
 import functools
@@ -35,8 +35,8 @@ def train():
     model = create_model()
     tk.training.train(
         model,
-        train_dataset,
-        val_dataset,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
         train_preprocessor=MyPreprocessor(data_augmentation=True),
         val_preprocessor=MyPreprocessor(),
         batch_size=batch_size,
@@ -193,15 +193,21 @@ def create_model():
     x = down(512)(x)  # 1/32
     x = blocks(512, 4)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
-    x = tk.keras.layers.Dense(
-        num_classes,
-        activation="softmax",
-        kernel_regularizer=tk.keras.regularizers.l2(1e-4),
+    logits = tk.keras.layers.Dense(
+        num_classes, kernel_regularizer=tk.keras.regularizers.l2(1e-4)
     )(x)
+    x = tk.keras.layers.Activation(activation="softmax")(logits)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
     base_lr = 1e-3 * batch_size * tk.hvd.size()
     optimizer = tk.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
-    tk.models.compile(model, optimizer, "categorical_crossentropy", ["acc"])
+
+    def loss(y_true, y_pred):
+        del y_pred
+        return tk.losses.categorical_crossentropy(
+            y_true, logits, from_logits=True, label_smoothing=0.2
+        )
+
+    tk.models.compile(model, optimizer, loss, ["acc"])  # "categorical_crossentropy"
     return model
 
 
