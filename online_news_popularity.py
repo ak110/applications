@@ -157,7 +157,7 @@ class MyPreprocessor(tk.data.Preprocessor):
     ):
         sample1 = dataset.get_sample(index)
         if self.data_augmentation:
-            sample2 = dataset.get_sample(np.random.choice(len(dataset)))
+            sample2 = dataset.get_sample(random.choice(len(dataset)))
             X, y = tk.ndimage.mixup(sample1, sample2, mode="uniform_ex")
         else:
             X, y = sample1

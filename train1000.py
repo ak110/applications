@@ -91,13 +91,11 @@ def create_model():
 
     def down(filters):
         def layers(x):
-            g = tk.keras.layers.Conv2D(
-                1,
-                3,
-                padding="same",
-                activation="sigmoid",
-                kernel_regularizer=tk.keras.regularizers.l2(1e-4),
-            )(x)
+            in_filters = tk.K.int_shape(x)[-1]
+            g = conv2d(in_filters // 8)(x)
+            g = bn()(g)
+            g = act()(g)
+            g = conv2d(in_filters, use_bias=True, activation="sigmoid")(g)
             x = tk.keras.layers.multiply([x, g])
             x = tk.keras.layers.MaxPooling2D(2, strides=1, padding="same")(x)
             x = tk.layers.BlurPooling2D(taps=4)(x)
@@ -125,24 +123,29 @@ def create_model():
         return layers
 
     inputs = x = tk.keras.layers.Input(input_shape)
-    x = tk.layers.Preprocess(mode="tf")(x)
     x = conv2d(128)(x)
     x = bn()(x)
-    x = blocks(128, 8)(x)
+    x = blocks(128, 4)(x)
     x = down(256)(x)
-    x = blocks(256, 8)(x)
+    x = blocks(256, 4)(x)
     x = down(512)(x)
-    x = blocks(512, 8)(x)
+    x = blocks(512, 4)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
-    x = tk.keras.layers.Dense(
-        num_classes,
-        activation="softmax",
-        kernel_regularizer=tk.keras.regularizers.l2(1e-4),
+    logits = tk.keras.layers.Dense(
+        num_classes, kernel_regularizer=tk.keras.regularizers.l2(1e-4)
     )(x)
+    x = tk.keras.layers.Activation(activation="softmax")(logits)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
     base_lr = 1e-3 * batch_size * tk.hvd.size()
     optimizer = tk.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
-    tk.models.compile(model, optimizer, "categorical_crossentropy", ["acc"])
+
+    def loss(y_true, y_pred):
+        del y_pred
+        return tk.losses.categorical_crossentropy(
+            y_true, logits, from_logits=True, label_smoothing=0.2
+        )
+
+    tk.models.compile(model, optimizer, loss, ["acc"])
     return model
 
 
@@ -175,11 +178,12 @@ class MyPreprocessor(tk.data.Preprocessor):
     ):
         sample1 = self._get_sample(dataset, index)
         if self.data_augmentation:
-            sample2 = self._get_sample(dataset, np.random.choice(len(dataset)))
+            sample2 = self._get_sample(dataset, random.choice(len(dataset)))
             X, y = tk.ndimage.mixup(sample1, sample2)
             X = self.aug2(image=X)["image"]
         else:
             X, y = sample1
+        X = tk.ndimage.preprocess_tf(X)
         return X, y
 
     def _get_sample(self, dataset, index):

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。
 
-[INFO ] val_loss: 1.764
-[INFO ] val_acc:  0.833
+[INFO ] val_loss: 1.795
+[INFO ] val_acc:  0.840
 
 """
 import functools
@@ -58,7 +58,8 @@ def validate(model=None):
         batch_size=batch_size * 2,
         use_horovod=True,
     )
-    tk.ml.print_classification_metrics(val_dataset.labels, pred)
+    if tk.hvd.is_master():
+        tk.ml.print_classification_metrics(val_dataset.labels, pred)
 
 
 @app.command()
@@ -139,15 +140,13 @@ def create_model():
 
     def down(filters):
         def layers(x):
-            g = tk.keras.layers.Conv2D(
-                1,
-                3,
-                padding="same",
-                activation="sigmoid",
-                kernel_regularizer=tk.keras.regularizers.l2(1e-4),
-            )(x)
+            in_filters = tk.K.int_shape(x)[-1]
+            g = conv2d(in_filters // 8)(x)
+            g = bn()(g)
+            g = act()(g)
+            g = conv2d(in_filters, use_bias=True, activation="sigmoid")(g)
             x = tk.keras.layers.multiply([x, g])
-            x = tk.keras.layers.MaxPooling2D(2, strides=1, padding="same")(x)
+            x = tk.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
             x = tk.layers.BlurPooling2D(taps=4)(x)
             x = conv2d(filters)(x)
             x = bn()(x)
@@ -207,7 +206,7 @@ def create_model():
             y_true, logits, from_logits=True, label_smoothing=0.2
         )
 
-    tk.models.compile(model, optimizer, loss, ["acc"])  # "categorical_crossentropy"
+    tk.models.compile(model, optimizer, loss, ["acc"])
     return model
 
 
@@ -236,7 +235,7 @@ class MyPreprocessor(tk.data.Preprocessor):
         if self.data_augmentation:
             f = tk.threading.get_pool().submit(
                 lambda index: self._get_sample(dataset, index),
-                np.random.choice(len(dataset)),
+                random.choice(len(dataset)),
             )
             sample1 = self._get_sample(dataset, index)
             sample2 = f.result()

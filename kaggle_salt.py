@@ -193,7 +193,7 @@ def create_model():
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
 
     def loss(y_true, y_pred):
-        _ = y_pred
+        del y_pred
         return tk.losses.lovasz_hinge(y_true, logits, from_logits=True)
 
     base_lr = 1e-3 * batch_size * tk.hvd.size()
