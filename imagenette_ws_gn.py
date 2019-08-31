@@ -185,24 +185,20 @@ class MyPreprocessor(tk.data.Preprocessor):
     def get_sample(
         self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
     ):
+        sample1 = self._get_sample(dataset, index, random)
         if self.data_augmentation:
-            f = tk.threading.get_pool().submit(
-                lambda index: self._get_sample(dataset, index),
-                random.choice(len(dataset)),
-            )
-            sample1 = self._get_sample(dataset, index)
-            sample2 = f.result()
-            X, y = tk.ndimage.mixup(sample1, sample2)
-            X = self.aug2(image=X)["image"]
+            sample2 = self._get_sample(dataset, random.choice(len(dataset)), random)
+            X, y = tk.ndimage.mixup(sample1, sample2, mode="beta", random=random)
+            X = self.aug2(image=X, random=random)["image"]
         else:
-            X, y = self._get_sample(dataset, index)
+            X, y = sample1
         X = tk.ndimage.preprocess_tf(X)
         return X, y
 
-    def _get_sample(self, dataset, index):
+    def _get_sample(self, dataset, index, random):
         X, y = dataset.get_sample(index)
         X = tk.ndimage.load(X)
-        X = self.aug1(image=X)["image"]
+        X = self.aug1(image=X, random=random)["image"]
         y = tk.keras.utils.to_categorical(y, num_classes)
         return X, y
 

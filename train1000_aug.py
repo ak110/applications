@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Train with 1000 (自作Augmentation)
 
-[INFO ] val_loss: 1.045
-[INFO ] val_acc:  0.757
-
-…なんか低め。
+[INFO ] val_loss: 1.552
+[INFO ] val_acc:  0.766
 
 """
 import functools
@@ -123,11 +121,11 @@ def create_model():
     inputs = x = tk.keras.layers.Input(input_shape)
     x = conv2d(128)(x)
     x = bn()(x)
-    x = blocks(128, 4)(x)
+    x = blocks(128, 8)(x)
     x = down(256)(x)
-    x = blocks(256, 4)(x)
+    x = blocks(256, 8)(x)
     x = down(512)(x)
-    x = blocks(512, 4)(x)
+    x = blocks(512, 8)(x)
     x = tk.keras.layers.GlobalAveragePooling2D()(x)
     logits = tk.keras.layers.Dense(
         num_classes, kernel_regularizer=tk.keras.regularizers.l2(1e-4)
@@ -167,19 +165,20 @@ class MyPreprocessor(tk.data.Preprocessor):
     def get_sample(
         self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
     ):
-        sample1 = self._get_sample(dataset, index)
+        sample1 = self._get_sample(dataset, index, random)
         if self.data_augmentation:
-            sample2 = self._get_sample(dataset, random.choice(len(dataset)))
-            X, y = tk.ndimage.mixup(sample1, sample2)
-            X = self.aug2(image=X)["image"]
+            sample2 = self._get_sample(dataset, random.choice(len(dataset)), random)
+            # X, y = tk.ndimage.cut_mix(*sample1, *sample2, random=random)
+            X, y = tk.ndimage.mixup(sample1, sample2, mode="uniform", random=random)
+            X = self.aug2(image=X, random=random)["image"]
         else:
             X, y = sample1
         X = tk.ndimage.preprocess_tf(X)
         return X, y
 
-    def _get_sample(self, dataset, index):
+    def _get_sample(self, dataset, index, random):
         X, y = dataset.get_sample(index)
-        X = self.aug1(image=X)["image"]
+        X = self.aug1(image=X, random=random)["image"]
         y = tk.keras.utils.to_categorical(y, num_classes)
         return X, y
 
