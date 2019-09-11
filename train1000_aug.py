@@ -30,12 +30,12 @@ def check():
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def train():
-    train_dataset, val_dataset = load_data()
+    train_set, val_set = load_data()
     model = create_model()
     tk.training.train(
         model,
-        train_dataset=train_dataset,
-        val_dataset=val_dataset,
+        train_set=train_set,
+        val_set=val_set,
         train_preprocessor=MyPreprocessor(data_augmentation=True),
         val_preprocessor=MyPreprocessor(),
         batch_size=batch_size,
@@ -48,17 +48,13 @@ def train():
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def validate(model=None):
-    _, val_dataset = load_data()
+    _, val_set = load_data()
     model = model or tk.models.load(models_dir / "model.h5")
     pred = tk.models.predict(
-        model,
-        val_dataset,
-        MyPreprocessor(),
-        batch_size=batch_size * 2,
-        use_horovod=True,
+        model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
     )
     if tk.hvd.is_master():
-        tk.ml.print_classification_metrics(val_dataset.labels, pred)
+        tk.evaluations.print_classification_metrics(val_set.labels, pred)
 
 
 def load_data():

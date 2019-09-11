@@ -3,7 +3,7 @@
 
 参考:
 
-<https://github.com/ozt-ca/tjo.hatenablog.samples/tree/master/r_samples/public_lib/jp/exp_uci_datasets/online_news_popularity>
+<https://github.com/ozt-ca/tjo.hatenablog.samples/tree/master/r_samples/public_lib/jp/exp_uci_sets/online_news_popularity>
 
 <https://gist.github.com/KazukiOnodera/64ffa671d47df059f97051b58e8bc32c>
 0.8609987920839894
@@ -43,12 +43,12 @@ def check():
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def train():
-    train_dataset, val_dataset = load_data()
-    model = create_model(train_dataset.labels.mean())
+    train_set, val_set = load_data()
+    model = create_model(train_set.labels.mean())
     tk.training.train(
         model,
-        train_dataset=train_dataset,
-        val_dataset=val_dataset,
+        train_set=train_set,
+        val_set=val_set,
         train_preprocessor=MyPreprocessor(data_augmentation=True),
         val_preprocessor=MyPreprocessor(),
         batch_size=batch_size,
@@ -59,37 +59,29 @@ def train():
         data_parallel=False,
     )
     pred = tk.models.predict(
-        model,
-        val_dataset,
-        MyPreprocessor(),
-        batch_size=batch_size * 2,
-        use_horovod=True,
+        model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
     )
     if tk.hvd.is_master():
-        tk.ml.print_regression_metrics(val_dataset.labels, pred)
+        tk.evaluations.print_regression_metrics(val_set.labels, pred)
 
 
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def validate(model=None):
-    _, val_dataset = load_data()
+    _, val_set = load_data()
     model = model or tk.models.load(models_dir / "model.h5")
     pred = tk.models.predict(
-        model,
-        val_dataset,
-        MyPreprocessor(),
-        batch_size=batch_size * 2,
-        use_horovod=True,
+        model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
     )
-    tk.ml.print_regression_metrics(val_dataset.labels, pred)
+    tk.evaluations.print_regression_metrics(val_set.labels, pred)
 
 
 def load_data():
     df_train = pd.read_csv(
-        "https://github.com/ozt-ca/tjo.hatenablog.samples/raw/master/r_samples/public_lib/jp/exp_uci_datasets/online_news_popularity/ONP_train.csv"
+        "https://github.com/ozt-ca/tjo.hatenablog.samples/raw/master/r_samples/public_lib/jp/exp_uci_sets/online_news_popularity/ONP_train.csv"
     )
     df_test = pd.read_csv(
-        "https://github.com/ozt-ca/tjo.hatenablog.samples/raw/master/r_samples/public_lib/jp/exp_uci_datasets/online_news_popularity/ONP_test.csv"
+        "https://github.com/ozt-ca/tjo.hatenablog.samples/raw/master/r_samples/public_lib/jp/exp_uci_sets/online_news_popularity/ONP_test.csv"
     )
     y_train = df_train["shares"]
     X_train = df_train.drop("shares", axis=1)

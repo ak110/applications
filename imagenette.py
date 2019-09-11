@@ -31,12 +31,12 @@ def check():
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def train():
-    train_dataset, val_dataset = load_data()
+    train_set, val_set = load_data()
     model = create_model()
     tk.training.train(
         model,
-        train_dataset=train_dataset,
-        val_dataset=val_dataset,
+        train_set=train_set,
+        val_set=val_set,
         train_preprocessor=MyPreprocessor(data_augmentation=True),
         val_preprocessor=MyPreprocessor(),
         batch_size=batch_size,
@@ -49,24 +49,20 @@ def train():
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def validate(model=None):
-    _, val_dataset = load_data()
+    _, val_set = load_data()
     model = model or tk.models.load(models_dir / "model.h5")
     pred = tk.models.predict(
-        model,
-        val_dataset,
-        MyPreprocessor(),
-        batch_size=batch_size * 2,
-        use_horovod=True,
+        model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
     )
     if tk.hvd.is_master():
-        tk.ml.print_classification_metrics(val_dataset.labels, pred)
+        tk.evaluations.print_classification_metrics(val_set.labels, pred)
 
 
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def ml():
     """metric learningお試しコード"""
-    train_dataset, val_dataset = load_data()
+    train_set, val_set = load_data()
     model = tk.models.load(models_dir / "model.h5")
 
     assert isinstance(
@@ -74,31 +70,21 @@ def ml():
     ), f"layer error: {model.layers[-2]}"
     model = tk.keras.models.Model(model.inputs, model.layers[-2].output)
 
-    train_dataset.data = tk.models.predict(
-        model,
-        train_dataset,
-        MyPreprocessor(),
-        batch_size=batch_size * 2,
-        use_horovod=True,
+    train_set.data = tk.models.predict(
+        model, train_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
     )
-    val_dataset.data = tk.models.predict(
-        model,
-        val_dataset,
-        MyPreprocessor(),
-        batch_size=batch_size * 2,
-        use_horovod=True,
+    val_set.data = tk.models.predict(
+        model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
     )
     logger.info("samples_per_class, acc")
     for samples_per_class in [1, 2, 4, 8, 16, 32, 50]:
-        ref_dataset = extract(train_dataset, num_classes, samples_per_class)
+        ref_set = extract(train_set, num_classes, samples_per_class)
 
         import sklearn.metrics.pairwise
 
-        cs = sklearn.metrics.pairwise.cosine_similarity(
-            val_dataset.data, ref_dataset.data
-        )
-        pred = ref_dataset.labels[cs.argmax(axis=-1)]
-        acc = np.mean(val_dataset.labels == pred)
+        cs = sklearn.metrics.pairwise.cosine_similarity(val_set.data, ref_set.data)
+        pred = ref_set.labels[cs.argmax(axis=-1)]
+        acc = np.mean(val_set.labels == pred)
 
         logger.info(f"{samples_per_class}, {acc * 100:.1f}")
 
@@ -112,15 +98,7 @@ def extract(dataset, num_classes, samples_per_class):
 
 
 def load_data():
-    class_names, X_train, y_train = tk.ml.listup_classification(data_dir / "train")
-    _, X_val, y_val = tk.ml.listup_classification(
-        data_dir / "val", class_names=class_names
-    )
-
-    # trainとvalを逆にしちゃう。
-    (X_train, y_train), (X_val, y_val) = (X_val, y_val), (X_train, y_train)
-
-    return tk.data.Dataset(X_train, y_train), tk.data.Dataset(X_val, y_val)
+    return tk.datasets.load_train_val_image_folders(data_dir, swap=True)
 
 
 def create_model():

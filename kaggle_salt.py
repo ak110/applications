@@ -36,12 +36,12 @@ def check():
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def train():
-    train_dataset, val_dataset = load_data()
+    train_set, val_set = load_data()
     model = create_model()
     tk.training.train(
         model,
-        train_dataset=train_dataset,
-        val_dataset=val_dataset,
+        train_set=train_set,
+        val_set=val_set,
         train_preprocessor=MyPreprocessor(data_augmentation=True),
         val_preprocessor=MyPreprocessor(),
         batch_size=batch_size,
@@ -49,39 +49,23 @@ def train():
         callbacks=[tk.callbacks.CosineAnnealing()],
         model_path=models_dir / "model.h5",
     )
-    _evaluate(model, val_dataset)
+    _evaluate(model, val_set)
 
 
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def validate(model=None):
-    _, val_dataset = load_data()
+    _, val_set = load_data()
     model = model or tk.models.load(models_dir / "model.h5")
-    _evaluate(model, val_dataset)
+    _evaluate(model, val_set)
 
 
-def _evaluate(model, val_dataset):
+def _evaluate(model, val_set):
     pred_val = tk.models.predict(
-        model,
-        val_dataset,
-        MyPreprocessor(),
-        batch_size=batch_size * 2,
-        use_horovod=True,
+        model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
     )
     if tk.hvd.is_master():
-        # スコア表示
-        score = compute_score(val_dataset.labels, pred_val, 0.5)
-        logger.info(f"score:     {score:.3f}")
-        # オレオレ指標
-        print_metrics(val_dataset.labels > 127, pred_val > 0.5, print_fn=logger.info)
-        # 閾値探索
-        _, _ = tk.ml.search_threshold(
-            val_dataset.labels,
-            pred_val,
-            np.linspace(0.3, 0.7, 41),
-            compute_score,
-            "maximize",
-        )
+        tk.evaluations.print_ss_metrics(val_set.labels / 255, pred_val, 0.5)
     tk.hvd.barrier()
 
 
@@ -204,46 +188,6 @@ def create_model():
         model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
     )
     return model
-
-
-def compute_score(y_true, y_pred, threshold):
-    """スコア算出。"""
-    y_true = np.int32(y_true > 127)
-    y_pred = np.int32(y_pred > threshold)
-
-    obj = np.any(y_true, axis=(1, 2, 3))
-    empty = np.logical_not(obj)
-    pred_empty = np.logical_not(np.any(y_pred, axis=(1, 2, 3)))
-    tn = np.logical_and(empty, pred_empty)
-
-    inter = np.sum(np.logical_and(y_true, y_pred), axis=(1, 2, 3))
-    union = np.sum(np.logical_or(y_true, y_pred), axis=(1, 2, 3))
-    iou = inter / np.maximum(union, 1)
-
-    prec_list = []
-    for th in np.arange(0.5, 1.0, 0.05):
-        pred_obj = iou > th
-        match = np.logical_and(obj, pred_obj) + tn
-        prec_list.append(np.sum(match) / len(y_true))
-    return np.mean(prec_list)
-
-
-def print_metrics(y_true, y_pred, print_fn):
-    """オレオレ指標。"""
-    obj = np.any(y_true, axis=(1, 2, 3))
-    empty = np.logical_not(obj)
-
-    # 答えが空でないときのIoUの平均
-    inter = np.sum(np.logical_and(y_true, y_pred), axis=(1, 2, 3))
-    union = np.sum(np.logical_or(y_true, y_pred), axis=(1, 2, 3))
-    iou = inter / np.maximum(union, 1)
-    iou_mean = np.mean(iou[obj])
-    print_fn(f"IoU mean:  {iou_mean:.3f}")
-
-    # 答えが空の場合の正解率
-    pred_empty = np.logical_not(np.any(y_pred, axis=(1, 2, 3)))
-    acc_empty = np.sum(np.logical_and(empty, pred_empty)) / np.sum(empty)
-    print_fn(f"Acc empty: {acc_empty:.3f}")
 
 
 class MyPreprocessor(tk.data.Preprocessor):

@@ -32,19 +32,19 @@ logger = tk.log.get(__name__)
 
 @app.command()
 def train():
-    train_dataset = load_train_data()
-    folds = tk.validation.split(train_dataset, nfold, split_seed=1)
-    create_pipeline().cv(train_dataset, folds, models_dir)
+    train_set = load_train_data()
+    folds = tk.validation.split(train_set, nfold, split_seed=1)
+    create_pipeline().cv(train_set, folds, models_dir)
     validate()
 
 
 @app.command()
 def validate():
-    train_dataset = load_train_data()
-    folds = tk.validation.split(train_dataset, nfold, split_seed=1)
-    oofp = create_pipeline().load(models_dir).predict_oof(train_dataset, folds)
+    train_set = load_train_data()
+    folds = tk.validation.split(train_set, nfold, split_seed=1)
+    oofp = create_pipeline().load(models_dir).predict_oof(train_set, folds)
     logger.info(
-        f"Local CV: {sklearn.metrics.roc_auc_score(train_dataset.labels, oofp):.3f}"
+        f"Local CV: {sklearn.metrics.roc_auc_score(train_set.labels, oofp):.3f}"
     )
     predict()
 
@@ -52,10 +52,10 @@ def validate():
 @app.command()
 def predict():
     # TODO: ValueError: Unknown values in column 'nom_8': {'2be51c868', '1f0a80e1d', 'ec337ce4c', 'a9bf3dc47'}
-    test_dataset = load_test_data()
-    pred = create_pipeline().load(models_dir).predict(test_dataset)
+    test_set = load_test_data()
+    pred = create_pipeline().load(models_dir).predict(test_set)
     df = pd.DataFrame()
-    df["id"] = test_dataset.ids
+    df["id"] = test_set.ids
     df["target"] = pred
     df.to_csv(models_dir / "submission.csv", index=False)
 
