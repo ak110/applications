@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。
 
-[INFO ] val_loss: 1.795
-[INFO ] val_acc:  0.840
+[INFO ] val_loss: 1.836
+[INFO ] val_acc:  0.846
 
 """
 import functools
@@ -163,7 +163,7 @@ def create_model():
     x = blocks(512, 4)(x)
     x = down(512)(x)  # 1/32
     x = blocks(512, 4)(x)
-    x = tk.keras.layers.GlobalAveragePooling2D()(x)
+    x = tk.layers.GeM2D()(x)
     logits = tk.keras.layers.Dense(
         num_classes, kernel_regularizer=tk.keras.regularizers.l2(1e-4)
     )(x)
