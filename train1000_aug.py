@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Train with 1000 (自作Augmentation)
 
-[INFO ] val_loss: 1.552
-[INFO ] val_acc:  0.766
+[INFO ] val_loss: 1.550
+[INFO ] val_acc:  0.764
 
 """
 import functools
@@ -30,7 +30,7 @@ def check():
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def train():
-    train_set, val_set = load_data()
+    train_set, val_set = tk.datasets.load_train1000()
     model = create_model()
     tk.training.train(
         model,
@@ -48,22 +48,13 @@ def train():
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def validate(model=None):
-    _, val_set = load_data()
+    _, val_set = tk.datasets.load_train1000()
     model = model or tk.models.load(models_dir / "model.h5")
     pred = tk.models.predict(
         model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
     )
     if tk.hvd.is_master():
         tk.evaluations.print_classification_metrics(val_set.labels, pred)
-
-
-def load_data():
-    (X_train, y_train), (X_val, y_val) = tk.keras.datasets.cifar10.load_data()
-    y_train = np.squeeze(y_train)
-    y_val = np.squeeze(y_val)
-    assert num_classes == len(np.unique(y_train))
-    X_train, y_train = tk.ml.extract1000(X_train, y_train, num_classes=num_classes)
-    return tk.data.Dataset(X_train, y_train), tk.data.Dataset(X_val, y_val)
 
 
 def create_model():
@@ -83,15 +74,7 @@ def create_model():
 
     def down(filters):
         def layers(x):
-            in_filters = tk.K.int_shape(x)[-1]
-            g = conv2d(in_filters // 8)(x)
-            g = bn()(g)
-            g = act()(g)
-            g = conv2d(in_filters, use_bias=True, activation="sigmoid")(g)
-            x = tk.keras.layers.multiply([x, g])
-            x = tk.keras.layers.MaxPooling2D(2, strides=1, padding="same")(x)
-            x = tk.layers.BlurPooling2D(taps=4)(x)
-            x = conv2d(filters)(x)
+            x = conv2d(filters, kernel_size=4, strides=2)(x)
             x = bn()(x)
             return x
 

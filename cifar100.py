@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """CIFAR-100
 
+[INFO ] val_loss: 2.244
+[INFO ] val_acc:  0.838
+
 """
 import functools
 import pathlib
@@ -152,9 +155,9 @@ class MyPreprocessor(tk.data.Preprocessor):
         sample1 = self._get_sample(dataset, index, random)
         if self.data_augmentation:
             sample2 = self._get_sample(dataset, random.choice(len(dataset)), random)
-            # X, y = tk.ndimage.cut_mix(*sample1, *sample2, random=random)
-            X, y = tk.ndimage.mixup(sample1, sample2, mode="uniform", random=random)
-            X = self.aug2(image=X, random=random)["image"]
+            X, y = tk.ndimage.cut_mix(*sample1, *sample2, random=random)
+            # X, y = tk.ndimage.mixup(sample1, sample2, mode="uniform", random=random)
+            # X = self.aug2(image=X, random=random)["image"]
         else:
             X, y = sample1
         X = tk.ndimage.preprocess_tf(X)

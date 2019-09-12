@@ -78,7 +78,9 @@ def ml():
     )
     logger.info("samples_per_class, acc")
     for samples_per_class in [1, 2, 4, 8, 16, 32, 50]:
-        ref_set = extract(train_set, num_classes, samples_per_class)
+        ref_set = tk.datasets.extract_class_balanced(
+            train_set, num_classes, samples_per_class
+        )
 
         import sklearn.metrics.pairwise
 
@@ -87,14 +89,6 @@ def ml():
         acc = np.mean(val_set.labels == pred)
 
         logger.info(f"{samples_per_class}, {acc * 100:.1f}")
-
-
-def extract(dataset, num_classes, samples_per_class):
-    """クラスごとに均等に抜き出す。"""
-    index_list = []
-    for c in range(num_classes):
-        index_list.extend(np.where(dataset.labels == c)[0][:samples_per_class])
-    return dataset.slice(index_list)
 
 
 def load_data():
