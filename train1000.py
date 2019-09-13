@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Train with 1000
 
-[INFO ] val_loss: 1.574
-[INFO ] val_acc:  0.763
+[INFO ] val_loss: 1.536
+[INFO ] val_acc:  0.783
 
 """
 import functools
@@ -132,7 +132,7 @@ class MyPreprocessor(tk.data.Preprocessor):
     def __init__(self, data_augmentation=False):
         self.data_augmentation = data_augmentation
         if self.data_augmentation:
-            self.aug1 = tk.image.Compose(
+            self.aug1 = A.Compose(
                 [
                     A.PadIfNeeded(
                         40,
@@ -144,6 +144,7 @@ class MyPreprocessor(tk.data.Preprocessor):
                     A.RandomCrop(32, 32),
                     A.HorizontalFlip(),
                     tk.autoaugment.CIFAR10Policy(),
+                    # A.Lambda(auto_augment),
                 ]
             )
             self.aug2 = tk.image.RandomErasing()
@@ -154,20 +155,20 @@ class MyPreprocessor(tk.data.Preprocessor):
     def get_sample(
         self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
     ):
-        sample1 = self._get_sample(dataset, index, random)
+        sample1 = self._get_sample(dataset, index)
         if self.data_augmentation:
-            sample2 = self._get_sample(dataset, random.choice(len(dataset)), random)
+            sample2 = self._get_sample(dataset, random.choice(len(dataset)))
             # X, y = tk.ndimage.cut_mix(*sample1, *sample2, random=random)
             X, y = tk.ndimage.mixup(sample1, sample2, mode="uniform", random=random)
-            X = self.aug2(image=X, random=random)["image"]
+            X = self.aug2(image=X)["image"]
         else:
             X, y = sample1
         X = tk.ndimage.preprocess_tf(X)
         return X, y
 
-    def _get_sample(self, dataset, index, random):
+    def _get_sample(self, dataset, index):
         X, y = dataset.get_sample(index)
-        X = self.aug1(image=X, random=random)["image"]
+        X = self.aug1(image=X)["image"]
         y = tk.keras.utils.to_categorical(y, num_classes)
         return X, y
 

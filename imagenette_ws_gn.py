@@ -162,7 +162,7 @@ class MyPreprocessor(tk.data.Preprocessor):
                     tk.image.RandomTransform(
                         width=input_shape[1], height=input_shape[0]
                     ),
-                    tk.image.RandomColorAugmentors(),
+                    tk.image.RandomColorAugmentors(noisy=True),
                 ]
             )
             self.aug2 = tk.image.RandomErasing()
@@ -173,20 +173,20 @@ class MyPreprocessor(tk.data.Preprocessor):
     def get_sample(
         self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
     ):
-        sample1 = self._get_sample(dataset, index, random)
+        sample1 = self._get_sample(dataset, index)
         if self.data_augmentation:
-            sample2 = self._get_sample(dataset, random.choice(len(dataset)), random)
+            sample2 = self._get_sample(dataset, random.choice(len(dataset)))
             X, y = tk.ndimage.mixup(sample1, sample2, mode="beta", random=random)
-            X = self.aug2(image=X, random=random)["image"]
+            X = self.aug2(image=X)["image"]
         else:
             X, y = sample1
         X = tk.ndimage.preprocess_tf(X)
         return X, y
 
-    def _get_sample(self, dataset, index, random):
+    def _get_sample(self, dataset, index):
         X, y = dataset.get_sample(index)
         X = tk.ndimage.load(X)
-        X = self.aug1(image=X, random=random)["image"]
+        X = self.aug1(image=X)["image"]
         y = tk.keras.utils.to_categorical(y, num_classes)
         return X, y
 
