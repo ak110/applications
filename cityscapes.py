@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""imagenetteの実験用コード。
+"""Cityscapesの実験用コード。
 
-Weight Standalization + GroupNormalization。重いので普段は使わない。
+https://paperswithcode.com/sota/semantic-segmentation-on-cityscapes
 
-val_loss: 1.753
-val_acc:  0.863
+Gated-SCNN (Extra Training Data: ×): 82.8%
+  - train 800x800
 
 """
 import functools
 import pathlib
-import random
 
 import albumentations as A
+import numpy as np
 
 import pytoolkit as tk
 
-num_classes = 10
-input_shape = (320, 320, 3)
-batch_size = 16
-data_dir = pathlib.Path(f"data/imagenette")
+num_classes = 19 + 1  # クラス+背景
+input_shape = (800, 800, 3)
+batch_size = 1
+data_dir = pathlib.Path(f"data/cityscapes")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
 app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
@@ -36,34 +36,55 @@ def check():
 def train():
     train_set, val_set = load_data()
     model = create_model()
-    evals = tk.training.train(
+    tk.training.train(
         model,
         train_set=train_set,
         val_set=val_set,
         train_preprocessor=MyPreprocessor(data_augmentation=True),
         val_preprocessor=MyPreprocessor(),
         batch_size=batch_size,
-        epochs=1800,
+        epochs=300,
         callbacks=[tk.callbacks.CosineAnnealing()],
         model_path=models_dir / "model.h5",
     )
-    tk.notifications.post_evals(evals)
+    _evaluate(model, val_set)
 
 
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
-def validate(model=None):
+def validate():
     _, val_set = load_data()
-    model = model or tk.models.load(models_dir / "model.h5")
-    pred = tk.models.predict(
-        model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
-    )
+    model = tk.models.load(models_dir / "model.h5")
+    _evaluate(model, val_set)
+
+
+def _evaluate(model, val_set):
     if tk.hvd.is_master():
-        tk.evaluations.print_classification_metrics(val_set.labels, pred)
+        pred_val = tk.models.predict(
+            model,
+            val_set,
+            MyPreprocessor(),
+            batch_size=batch_size * 2,
+            flow=True,
+            on_batch_fn=_tta,
+        )
+        evals = tk.evaluations.print_ss_metrics(flow_labels(val_set), pred_val, 0.5)
+        tk.notifications.post_evals(evals)
+    tk.hvd.barrier()
 
 
 def load_data():
-    return tk.datasets.load_train_val_image_folders(data_dir, swap=True)
+    return tk.datasets.load_cityscapes(data_dir)
+
+
+def _tta(model, X_batch):
+    return np.mean(
+        [
+            model.predict_on_batch(X_batch),
+            model.predict_on_batch(X_batch[:, :, ::-1, :])[:, :, ::-1, :],
+        ],
+        axis=0,
+    )
 
 
 def create_model():
@@ -128,16 +149,33 @@ def create_model():
     x = conv2d(128, kernel_size=2, strides=2)(x)  # 1/4
     x = bn()(x)
     x = blocks(128, 2)(x)
+    d = x
     x = down(256)(x)  # 1/8
     x = blocks(256, 4)(x)
     x = down(512)(x)  # 1/16
     x = blocks(512, 4)(x)
     x = down(512)(x)  # 1/32
     x = blocks(512, 4)(x)
-    x = tk.layers.GeM2D()(x)
-    logits = tk.keras.layers.Dense(
-        num_classes, kernel_regularizer=tk.keras.regularizers.l2(1e-4)
+    x = conv2d(128 * 8 * 8, kernel_size=1)(x)
+    x = bn()(x)
+    x = act()(x)
+    x = tk.layers.SubpixelConv2D(scale=8)(x)  # 1/4
+    x = conv2d(128)(x)
+    x = bn()(x)
+    d = bn()(conv2d(128)(d))
+    x = tk.keras.layers.add([x, d])
+    x = blocks(128, 3)(x)
+    x = tk.keras.layers.Conv2D(
+        num_classes * 4 * 4,
+        kernel_size=1,
+        padding="same",
+        kernel_initializer="he_uniform",
+        kernel_regularizer=tk.keras.regularizers.l2(1e-4),
+        use_bias=True,
+        bias_initializer=tk.keras.initializers.constant(tk.math.logit(0.01)),
     )(x)
+    x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/1
+    logits = x
     x = tk.keras.layers.Activation(activation="softmax")(logits)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
     base_lr = 1e-3 * batch_size * tk.hvd.size()
@@ -145,11 +183,18 @@ def create_model():
 
     def loss(y_true, y_pred):
         del y_pred
-        return tk.losses.categorical_crossentropy(
-            y_true, logits, from_logits=True, label_smoothing=0.2
-        )
+        tf = tk.tf
+        losses = [
+            tk.losses.lovasz_hinge(
+                y_true[:, :, :, i], logits[:, :, :, i], from_logits=True
+            )
+            for i in range(num_classes)
+        ]
+        return tf.reduce_mean(losses, axis=0)
 
-    tk.models.compile(model, optimizer, loss, ["acc"])
+    tk.models.compile(
+        model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
+    )
     return model
 
 
@@ -159,7 +204,7 @@ class MyPreprocessor(tk.data.Preprocessor):
     def __init__(self, data_augmentation=False):
         self.data_augmentation = data_augmentation
         if self.data_augmentation:
-            self.aug1 = A.Compose(
+            self.aug = A.Compose(
                 [
                     tk.image.RandomTransform(
                         width=input_shape[1], height=input_shape[0]
@@ -167,28 +212,33 @@ class MyPreprocessor(tk.data.Preprocessor):
                     tk.image.RandomColorAugmentors(noisy=True),
                 ]
             )
-            self.aug2 = tk.image.RandomErasing()
         else:
-            self.aug1 = tk.image.Resize(width=input_shape[1], height=input_shape[0])
-            self.aug2 = None
+            self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
 
     def get_sample(self, dataset: tk.data.Dataset, index: int):
-        sample1 = self._get_sample(dataset, index)
-        if self.data_augmentation:
-            sample2 = self._get_sample(dataset, random.choice(range(len(dataset))))
-            X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")
-            X = self.aug2(image=X)["image"]
-        else:
-            X, y = sample1
-        X = tk.ndimage.preprocess_tf(X)
-        return X, y
-
-    def _get_sample(self, dataset, index):
         X, y = dataset.get_sample(index)
         X = tk.ndimage.load(X)
-        X = self.aug1(image=X)["image"]
-        y = tk.keras.utils.to_categorical(y, num_classes)
+        y = tk.ndimage.load(y)
+        y = tk.ndimage.mask_to_onehot(
+            y, dataset.metadata["class_colors"], append_bg=True
+        )
+        aug = self.aug(image=X, masks=[y[:, :, i] for i in range(y.shape[-1])])
+        X = aug["image"]
+        y = aug["masks"]
+        y = np.concatenate(y, axis=2)
+        X = tk.ndimage.preprocess_tf(X)
+        y = y / 255
         return X, y
+
+
+def flow_labels(dataset):
+    for y in dataset.labels:
+        y = tk.ndimage.load(y)
+        y = tk.ndimage.mask_to_onehot(
+            y, dataset.metadata["class_colors"], append_bg=True
+        )
+        y = y / 255
+        yield y
 
 
 if __name__ == "__main__":

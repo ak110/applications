@@ -67,7 +67,7 @@ def train():
     )
     if tk.hvd.is_master():
         evals = tk.evaluations.print_classification_metrics(val_set.labels, pred)
-        tk.notification.post(evals)
+        tk.notifications.post_evals(evals)
 
 
 @app.command()
@@ -127,9 +127,7 @@ class MyPreprocessor(tk.data.Preprocessor):
     def __init__(self, data_augmentation=False):
         self.data_augmentation = data_augmentation
 
-    def get_sample(
-        self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
-    ):
+    def get_sample(self, dataset: tk.data.Dataset, index: int):
         X, y = dataset.get_sample(index)
         X = np.frombuffer(X.replace(" ", "").encode("utf-16-le"), dtype=np.uint16)
         X = tk.keras.preprocessing.sequence.pad_sequences([X], input_shape[0])[0]

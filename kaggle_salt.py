@@ -12,6 +12,7 @@
 """
 import functools
 import pathlib
+import random
 
 import albumentations as A
 import numpy as np
@@ -80,7 +81,7 @@ def _evaluate(model, val_set):
     )
     if tk.hvd.is_master():
         evals = tk.evaluations.print_ss_metrics(val_set.labels / 255, pred_val, 0.5)
-        tk.notification.post(evals)
+        tk.notifications.post_evals(evals)
     tk.hvd.barrier()
 
 
@@ -270,9 +271,7 @@ class MyPreprocessor(tk.data.Preprocessor):
         else:
             self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
 
-    def get_sample(
-        self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
-    ):
+    def get_sample(self, dataset: tk.data.Dataset, index: int):
         X, y = dataset.get_sample(index)
         d = self.aug(image=X, mask=y, rand=random)
         X = tk.applications.darknet53.preprocess_input(d["image"])

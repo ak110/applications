@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""imagenetteの実験用コード。
+"""imagenetteの実験用コード。(trainとvalをひっくり返している。)
 
 [INFO ] val_loss: 1.810
 [INFO ] val_acc:  0.862
@@ -7,6 +7,7 @@
 """
 import functools
 import pathlib
+import random
 
 import albumentations as A
 import numpy as np
@@ -45,7 +46,7 @@ def train():
         callbacks=[tk.callbacks.CosineAnnealing()],
         model_path=models_dir / "model.h5",
     )
-    tk.notification.post(evals)
+    tk.notifications.post_evals(evals)
 
 
 @app.command()
@@ -68,9 +69,9 @@ def ml():
     model = tk.models.load(models_dir / "model.h5")
 
     assert isinstance(
-        model.layers[-2], tk.keras.layers.GlobalAveragePooling2D
-    ), f"layer error: {model.layers[-2]}"
-    model = tk.keras.models.Model(model.inputs, model.layers[-2].output)
+        model.layers[-3], tk.layers.GeM2D
+    ), f"layer error: {model.layers[-3]}"
+    model = tk.keras.models.Model(model.inputs, model.layers[-3].output)
 
     train_set.data = tk.models.predict(
         model, train_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
@@ -203,13 +204,11 @@ class MyPreprocessor(tk.data.Preprocessor):
             self.aug1 = tk.image.Resize(width=input_shape[1], height=input_shape[0])
             self.aug2 = None
 
-    def get_sample(
-        self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
-    ):
+    def get_sample(self, dataset: tk.data.Dataset, index: int):
         sample1 = self._get_sample(dataset, index)
         if self.data_augmentation:
-            sample2 = self._get_sample(dataset, random.choice(len(dataset)))
-            X, y = tk.ndimage.mixup(sample1, sample2, mode="beta", random=random)
+            sample2 = self._get_sample(dataset, random.choice(range(len(dataset))))
+            X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")
             X = self.aug2(image=X)["image"]
         else:
             X, y = sample1

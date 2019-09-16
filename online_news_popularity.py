@@ -19,8 +19,8 @@
 """
 import functools
 import pathlib
+import random
 
-import numpy as np
 import pandas as pd
 import sklearn.preprocessing
 
@@ -63,7 +63,7 @@ def train():
     )
     if tk.hvd.is_master():
         evals = tk.evaluations.print_regression_metrics(val_set.labels, pred)
-        tk.notification.post(evals)
+        tk.notifications.post_evals(evals)
 
 
 @app.command()
@@ -145,12 +145,10 @@ class MyPreprocessor(tk.data.Preprocessor):
     def __init__(self, data_augmentation=False):
         self.data_augmentation = data_augmentation
 
-    def get_sample(
-        self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
-    ):
+    def get_sample(self, dataset: tk.data.Dataset, index: int):
         sample1 = dataset.get_sample(index)
         if self.data_augmentation:
-            sample2 = dataset.get_sample(random.choice(len(dataset)))
+            sample2 = dataset.get_sample(random.choice(range(len(dataset))))
             X, y = tk.ndimage.mixup(sample1, sample2, mode="uniform_ex")
         else:
             X, y = sample1

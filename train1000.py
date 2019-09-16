@@ -7,10 +7,10 @@
 """
 import functools
 import pathlib
+import random
 
 import albumentations as A
 import cv2
-import numpy as np
 
 import pytoolkit as tk
 
@@ -45,7 +45,7 @@ def train():
         callbacks=[tk.callbacks.CosineAnnealing()],
         model_path=models_dir / "model.h5",
     )
-    tk.notification.post(evals)
+    tk.notifications.post_evals(evals)
 
 
 @app.command()
@@ -152,14 +152,12 @@ class MyPreprocessor(tk.data.Preprocessor):
             self.aug1 = A.Compose([])
             self.aug2 = None
 
-    def get_sample(
-        self, dataset: tk.data.Dataset, index: int, random: np.random.RandomState
-    ):
+    def get_sample(self, dataset: tk.data.Dataset, index: int):
         sample1 = self._get_sample(dataset, index)
         if self.data_augmentation:
-            sample2 = self._get_sample(dataset, random.choice(len(dataset)))
-            # X, y = tk.ndimage.cut_mix(*sample1, *sample2, random=random)
-            X, y = tk.ndimage.mixup(sample1, sample2, mode="uniform", random=random)
+            sample2 = self._get_sample(dataset, random.choice(range(len(dataset))))
+            # X, y = tk.ndimage.cut_mix(*sample1, *sample2)
+            X, y = tk.ndimage.mixup(sample1, sample2, mode="uniform")
             X = self.aug2(image=X)["image"]
         else:
             X, y = sample1

@@ -43,7 +43,9 @@ def validate():
     train_set = load_train_data()
     folds = tk.validation.split(train_set, nfold, split_seed=1)
     oofp = create_pipeline().load(models_dir).predict_oof(train_set, folds)
-    tk.notification.post({"auc": sklearn.metrics.roc_auc_score(train_set.labels, oofp)})
+    tk.notifications.post_evals(
+        {"auc": sklearn.metrics.roc_auc_score(train_set.labels, oofp)}
+    )
     predict()
 
 
