@@ -79,7 +79,8 @@ def _evaluate(model, val_set):
         on_batch_fn=_tta,
     )
     if tk.hvd.is_master():
-        tk.evaluations.print_ss_metrics(val_set.labels / 255, pred_val, 0.5)
+        evals = tk.evaluations.print_ss_metrics(val_set.labels / 255, pred_val, 0.5)
+        tk.notification.post(evals)
     tk.hvd.barrier()
 
 

@@ -33,7 +33,7 @@ def check():
 def train():
     train_set, val_set = tk.datasets.load_cifar100()
     model = create_model()
-    tk.training.train(
+    evals = tk.training.train(
         model,
         train_set=train_set,
         val_set=val_set,
@@ -44,6 +44,7 @@ def train():
         callbacks=[tk.callbacks.LearningRateStepDecay()],
         model_path=models_dir / "model.h5",
     )
+    tk.notification.post(evals)
 
 
 @app.command()

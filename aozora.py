@@ -66,7 +66,8 @@ def train():
         model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
     )
     if tk.hvd.is_master():
-        tk.evaluations.print_classification_metrics(val_set.labels, pred)
+        evals = tk.evaluations.print_classification_metrics(val_set.labels, pred)
+        tk.notification.post(evals)
 
 
 @app.command()

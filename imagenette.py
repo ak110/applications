@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。
 
-[INFO ] val_loss: 1.836
-[INFO ] val_acc:  0.846
+[INFO ] val_loss: 1.810
+[INFO ] val_acc:  0.862
 
 """
 import functools
@@ -34,7 +34,7 @@ def check():
 def train():
     train_set, val_set = load_data()
     model = create_model()
-    tk.training.train(
+    evals = tk.training.train(
         model,
         train_set=train_set,
         val_set=val_set,
@@ -45,6 +45,7 @@ def train():
         callbacks=[tk.callbacks.CosineAnnealing()],
         model_path=models_dir / "model.h5",
     )
+    tk.notification.post(evals)
 
 
 @app.command()
