@@ -8,6 +8,7 @@
 import functools
 import pathlib
 
+import albumentations as A
 import numpy as np
 
 import pytoolkit as tk
@@ -188,7 +189,7 @@ class MyPreprocessor(tk.data.Preprocessor):
     def __init__(self, data_augmentation=False):
         self.data_augmentation = data_augmentation
         if self.data_augmentation:
-            self.aug1 = tk.image.Compose(
+            self.aug1 = A.Compose(
                 [
                     tk.image.RandomTransform(
                         width=input_shape[1], height=input_shape[0]

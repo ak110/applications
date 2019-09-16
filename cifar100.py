@@ -8,6 +8,7 @@
 import functools
 import pathlib
 
+import albumentations as A
 import numpy as np
 
 import pytoolkit as tk
@@ -138,7 +139,7 @@ class MyPreprocessor(tk.data.Preprocessor):
     def __init__(self, data_augmentation=False):
         self.data_augmentation = data_augmentation
         if self.data_augmentation:
-            self.aug1 = tk.image.Compose(
+            self.aug1 = A.Compose(
                 [
                     tk.image.RandomTransform(width=32, height=32),
                     tk.image.RandomColorAugmentors(noisy=True),
@@ -146,7 +147,7 @@ class MyPreprocessor(tk.data.Preprocessor):
             )
             self.aug2 = tk.image.RandomErasing()
         else:
-            self.aug1 = tk.image.Compose([])
+            self.aug1 = A.Compose([])
             self.aug2 = None
 
     def get_sample(

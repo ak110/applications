@@ -149,7 +149,7 @@ class MyPreprocessor(tk.data.Preprocessor):
             )
             self.aug2 = tk.image.RandomErasing()
         else:
-            self.aug1 = tk.image.Compose([])
+            self.aug1 = A.Compose([])
             self.aug2 = None
 
     def get_sample(
