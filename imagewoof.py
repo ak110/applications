@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """imagewoofの実験用コード。(こっちはtrainとvalをひっくり返していない。)
 
+<https://github.com/fastai/imagenette>
+
+## レギュレーション
+
+- No inference time tricks, e.g. no: TTA, validation size > train size
+- Must start with random weights
+- Must be one of the size/#epoch combinations listed in the table
+
+## 実行結果 (256px/400epochs, LB: 90.2)
+
+val_loss: 1.226
+val_acc:  0.910
+
 """
 import functools
 import pathlib
@@ -11,7 +24,7 @@ import albumentations as A
 import pytoolkit as tk
 
 num_classes = 10
-input_shape = (320, 320, 3)
+input_shape = (256, 256, 3)
 batch_size = 16
 data_dir = pathlib.Path(f"data/imagewoof")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
@@ -38,8 +51,7 @@ def train():
         train_preprocessor=MyPreprocessor(data_augmentation=True),
         val_preprocessor=MyPreprocessor(),
         batch_size=batch_size,
-        epochs=300,
-        # epochs=1800,
+        epochs=400,
         callbacks=[tk.callbacks.CosineAnnealing()],
         model_path=models_dir / "model.h5",
     )

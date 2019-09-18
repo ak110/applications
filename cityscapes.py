@@ -220,7 +220,7 @@ class MyPreprocessor(tk.data.Preprocessor):
         X = tk.ndimage.load(X)
         y = tk.ndimage.load(y)
         y = tk.ndimage.mask_to_onehot(
-            y, dataset.metadata["class_colors"], append_bg=True
+            y, dataset.metadata["class_colors"], append_bg=True  # type: ignore
         )
         aug = self.aug(image=X, masks=[y[:, :, i] for i in range(y.shape[-1])])
         X = aug["image"]

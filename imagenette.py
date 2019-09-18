@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。(trainとvalをひっくり返している。)
 
-[INFO ] val_loss: 1.810
-[INFO ] val_acc:  0.862
+val_loss: 1.815
+val_acc:  0.867
 
 """
 import functools
@@ -10,7 +10,6 @@ import pathlib
 import random
 
 import albumentations as A
-import numpy as np
 
 import pytoolkit as tk
 
@@ -59,39 +58,6 @@ def validate(model=None):
     )
     if tk.hvd.is_master():
         tk.evaluations.print_classification_metrics(val_set.labels, pred)
-
-
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
-def ml():
-    """metric learningお試しコード"""
-    train_set, val_set = load_data()
-    model = tk.models.load(models_dir / "model.h5")
-
-    assert isinstance(
-        model.layers[-3], tk.layers.GeM2D
-    ), f"layer error: {model.layers[-3]}"
-    model = tk.keras.models.Model(model.inputs, model.layers[-3].output)
-
-    train_set.data = tk.models.predict(
-        model, train_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
-    )
-    val_set.data = tk.models.predict(
-        model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
-    )
-    logger.info("samples_per_class, acc")
-    for samples_per_class in [1, 2, 4, 8, 16, 32, 50]:
-        ref_set = tk.datasets.extract_class_balanced(
-            train_set, num_classes, samples_per_class
-        )
-
-        import sklearn.metrics.pairwise
-
-        cs = sklearn.metrics.pairwise.cosine_similarity(val_set.data, ref_set.data)
-        pred = ref_set.labels[cs.argmax(axis=-1)]
-        acc = np.mean(val_set.labels == pred)
-
-        logger.info(f"{samples_per_class}, {acc * 100:.1f}")
 
 
 def load_data():
