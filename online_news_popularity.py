@@ -49,18 +49,15 @@ def train():
         model,
         train_set=train_set,
         val_set=val_set,
-        train_preprocessor=MyPreprocessor(data_augmentation=True),
-        val_preprocessor=MyPreprocessor(),
-        batch_size=batch_size,
+        train_data_loader=MyDataLoader(data_augmentation=True),
+        val_data_loader=MyDataLoader(),
         epochs=100,
         callbacks=[tk.callbacks.CosineAnnealing()],
         model_path=models_dir / "model.h5",
         workers=8,
         data_parallel=False,
     )
-    pred = tk.models.predict(
-        model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
-    )
+    pred = tk.models.predict(model, val_set, MyDataLoader(), use_horovod=True)
     if tk.hvd.is_master():
         evals = tk.evaluations.print_regression_metrics(val_set.labels, pred)
         tk.notifications.post_evals(evals)
@@ -71,9 +68,7 @@ def train():
 def validate(model=None):
     _, val_set = load_data()
     model = model or tk.models.load(models_dir / "model.h5")
-    pred = tk.models.predict(
-        model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
-    )
+    pred = tk.models.predict(model, val_set, MyDataLoader(), use_horovod=True)
     tk.evaluations.print_regression_metrics(val_set.labels, pred)
 
 
@@ -139,13 +134,14 @@ def create_model(bias=0):
     return model
 
 
-class MyPreprocessor(tk.data.Preprocessor):
-    """Preprocessor。"""
+class MyDataLoader(tk.data.DataLoader):
+    """DataLoader"""
 
     def __init__(self, data_augmentation=False):
+        super().__init__(batch_size=batch_size, parallel=True)
         self.data_augmentation = data_augmentation
 
-    def get_sample(self, dataset: tk.data.Dataset, index: int):
+    def get_data(self, dataset: tk.data.Dataset, index: int):
         sample1 = dataset.get_sample(index)
         if self.data_augmentation:
             sample2 = dataset.get_sample(random.choice(range(len(dataset))))

@@ -3,20 +3,20 @@
 
 Weight Standalization + GroupNormalization。重いので普段は使わない。
 
-val_loss: 1.753
-val_acc:  0.863
+val_loss: 1.748
+val_acc:  0.863
 
 """
 import functools
 import pathlib
-import random
 
 import albumentations as A
 
 import pytoolkit as tk
 
 num_classes = 10
-input_shape = (320, 320, 3)
+train_shape = (320, 320, 3)
+predict_shape = (480, 480, 3)
 batch_size = 16
 data_dir = pathlib.Path(f"data/imagenette")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
@@ -40,9 +40,8 @@ def train():
         model,
         train_set=train_set,
         val_set=val_set,
-        train_preprocessor=MyPreprocessor(data_augmentation=True),
-        val_preprocessor=MyPreprocessor(),
-        batch_size=batch_size,
+        train_data_loader=MyDataLoader(data_augmentation=True),
+        val_data_loader=MyDataLoader(),
         epochs=1800,
         callbacks=[tk.callbacks.CosineAnnealing()],
         model_path=models_dir / "model.h5",
@@ -55,9 +54,7 @@ def train():
 def validate(model=None):
     _, val_set = load_data()
     model = model or tk.models.load(models_dir / "model.h5")
-    pred = tk.models.predict(
-        model, val_set, MyPreprocessor(), batch_size=batch_size * 2, use_horovod=True
-    )
+    pred = tk.models.predict(model, val_set, MyDataLoader(), use_horovod=True)
     if tk.hvd.is_master():
         tk.evaluations.print_classification_metrics(val_set.labels, pred)
 
@@ -114,7 +111,7 @@ def create_model():
 
         return layers
 
-    inputs = x = tk.keras.layers.Input(input_shape)
+    inputs = x = tk.keras.layers.Input((None, None, 3))
     x = tk.keras.layers.concatenate(
         [
             conv2d(16, kernel_size=2, strides=2)(x),
@@ -125,7 +122,12 @@ def create_model():
     )  # 1/2
     x = bn()(x)
     x = act()(x)
-    x = conv2d(128, kernel_size=2, strides=2)(x)  # 1/4
+    x = tk.keras.layers.concatenate(
+        [
+            conv2d(64, kernel_size=2, strides=2)(x),
+            conv2d(64, kernel_size=4, strides=2)(x),
+        ]
+    )  # 1/4
     x = bn()(x)
     x = blocks(128, 2)(x)
     x = down(256)(x)  # 1/8
@@ -153,41 +155,47 @@ def create_model():
     return model
 
 
-class MyPreprocessor(tk.data.Preprocessor):
-    """Preprocessor。"""
+class MyDataLoader(tk.data.DataLoader):
+    """DataLoader"""
 
     def __init__(self, data_augmentation=False):
+        super().__init__(
+            batch_size=batch_size,
+            parallel=True,
+            data_per_sample=2 if data_augmentation else 1,
+        )
         self.data_augmentation = data_augmentation
         if self.data_augmentation:
             self.aug1 = A.Compose(
                 [
                     tk.image.RandomTransform(
-                        width=input_shape[1], height=input_shape[0]
+                        width=train_shape[1],
+                        height=train_shape[0],
+                        base_scale=predict_shape[0] / train_shape[0],
                     ),
                     tk.image.RandomColorAugmentors(noisy=True),
                 ]
             )
             self.aug2 = tk.image.RandomErasing()
         else:
-            self.aug1 = tk.image.Resize(width=input_shape[1], height=input_shape[0])
+            self.aug1 = tk.image.Resize(width=predict_shape[1], height=predict_shape[0])
             self.aug2 = None
 
-    def get_sample(self, dataset: tk.data.Dataset, index: int):
-        sample1 = self._get_sample(dataset, index)
-        if self.data_augmentation:
-            sample2 = self._get_sample(dataset, random.choice(range(len(dataset))))
-            X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")
-            X = self.aug2(image=X)["image"]
-        else:
-            X, y = sample1
-        X = tk.ndimage.preprocess_tf(X)
-        return X, y
-
-    def _get_sample(self, dataset, index):
+    def get_data(self, dataset: tk.data.Dataset, index: int):
         X, y = dataset.get_sample(index)
         X = tk.ndimage.load(X)
         X = self.aug1(image=X)["image"]
         y = tk.keras.utils.to_categorical(y, num_classes)
+        return X, y
+
+    def get_sample(self, data: list) -> tuple:
+        if self.data_augmentation:
+            sample1, sample2 = data
+            X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")
+            X = self.aug2(image=X)["image"]
+        else:
+            X, y = super().get_sample(data)
+        X = tk.ndimage.preprocess_tf(X)
         return X, y
 
 

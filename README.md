@@ -8,7 +8,7 @@
 
 - ./
   - data/
-    - imagenette
+    - imagenette/
     - …
   - pytoolkit/
   - aozora.py

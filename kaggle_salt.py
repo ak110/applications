@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """TGS Salt Identification Challengeの実験用コード。
 
-[INFO ] IoU:            [0.957 0.868]
-[INFO ] mIoU:           0.912
-[INFO ] IoU score:      0.868
-[INFO ] Dice coef.:     0.524
-[INFO ] IoU mean:       0.855
-[INFO ] Acc empty:      0.942
-[INFO ] Pixel Accuracy: 0.967
+Private: 0.87401
+Public:  0.85624
+
+iou:       [0.96  0.875]
+miou:      0.917
+iou_score: 0.871
+dice:      0.521
+fg_iou:    0.851
+bg_acc:    0.954
+acc:       0.969
 
 """
 import functools
@@ -44,9 +47,8 @@ def train():
         model,
         train_set=train_set,
         val_set=val_set,
-        train_preprocessor=MyPreprocessor(data_augmentation=True),
-        val_preprocessor=MyPreprocessor(),
-        batch_size=batch_size,
+        train_data_loader=MyDataLoader(data_augmentation=True),
+        val_data_loader=MyDataLoader(),
         epochs=300,
         callbacks=[tk.callbacks.CosineAnnealing()],
         model_path=models_dir / "model.h5",
@@ -72,12 +74,7 @@ def predict():
 
 def _evaluate(model, val_set):
     pred_val = tk.models.predict(
-        model,
-        val_set,
-        MyPreprocessor(),
-        batch_size=batch_size * 2,
-        use_horovod=True,
-        on_batch_fn=_tta,
+        model, val_set, MyDataLoader(), use_horovod=True, on_batch_fn=_tta
     )
     if tk.hvd.is_master():
         evals = tk.evaluations.print_ss_metrics(val_set.labels / 255, pred_val, 0.5)
@@ -89,12 +86,7 @@ def _predict(model):
     test_set = load_test_data()
     test_set.labels = np.zeros_like(test_set.data)  # エラー除けのダミー
     pred_test = tk.models.predict(
-        model,
-        test_set,
-        MyPreprocessor(),
-        batch_size=batch_size * 2,
-        use_horovod=True,
-        on_batch_fn=_tta,
+        model, test_set, MyDataLoader(), use_horovod=True, on_batch_fn=_tta
     )
 
     if tk.hvd.is_master():
@@ -184,7 +176,6 @@ def create_model():
     x = bn()(x)
     x = act()(x)
     x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/4
-
     x = tk.layers.CoordChannel2D(x_channel=False)(x)
     x = conv2d(256)(x)
     x = bn()(x)
@@ -193,53 +184,22 @@ def create_model():
     d = conv2d(256)(d)
     d = bn()(d)
     x = tk.keras.layers.add([x, d])
-    x = blocks(256, 3)(x)
-    x = conv2d(32 * 4 * 4)(x)
-    x = bn()(x)
-    x = act()(x)
-    x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/1
-
-    x = tk.layers.CoordChannel2D(x_channel=False)(x)
-    x = conv2d(32)(x)
-    x = bn()(x)
-    d = backbone.get_layer("block2_add").output  # 1/1
-    d = tk.layers.ScaleGradient(scale=0.1)(d)
-    d = conv2d(32)(d)
-    d = bn()(d)
-    x = tk.keras.layers.add([x, d])
-    x = blocks(32, 3)(x)
-
-    edge_logits = tk.keras.layers.Cropping2D(((5, 6), (5, 6)))(
-        conv2d(
-            1,
-            use_bias=True,
-            bias_initializer=tk.keras.initializers.constant(tk.math.logit(0.01)),
-        )(x)
-    )
-
+    x = blocks(256, 8)(x)
     x = conv2d(
-        1,
+        1 * 4 * 4,
         use_bias=True,
         bias_initializer=tk.keras.initializers.constant(tk.math.logit(0.01)),
     )(x)
+    x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/1
     x = tk.keras.layers.Cropping2D(((5, 6), (5, 6)))(x)  # 101
     logits = x
-
     x = tk.keras.layers.Activation("sigmoid")(x)
+
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
 
     def loss(y_true, y_pred):
         del y_pred
-
-        loss_main = tk.losses.lovasz_hinge(y_true, logits, from_logits=True)
-
-        tf = tk.tf
-        edge_true = tf.image.sobel_edges(y_true)
-        edge_true = tf.math.sqrt(edge_true[:, :, :, :, 0] * edge_true[:, :, :, :, 1])
-        edge_true = tf.math.maximum(edge_true, 0)
-        loss_edge = tk.losses.lovasz_hinge(edge_true, edge_logits, from_logits=True)
-
-        return loss_main * 0.75 + loss_edge * 0.25
+        return tk.losses.lovasz_hinge(y_true, logits, from_logits=True)
 
     base_lr = 1e-3 * batch_size * tk.hvd.size()
     optimizer = tk.keras.optimizers.SGD(
@@ -251,10 +211,11 @@ def create_model():
     return model
 
 
-class MyPreprocessor(tk.data.Preprocessor):
-    """Preprocessor。"""
+class MyDataLoader(tk.data.DataLoader):
+    """DataLoader"""
 
     def __init__(self, data_augmentation=False):
+        super().__init__(batch_size=batch_size, parallel=True)
         self.data_augmentation = data_augmentation
         if self.data_augmentation:
             self.aug = A.Compose(
@@ -271,7 +232,7 @@ class MyPreprocessor(tk.data.Preprocessor):
         else:
             self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
 
-    def get_sample(self, dataset: tk.data.Dataset, index: int):
+    def get_data(self, dataset: tk.data.Dataset, index: int):
         X, y = dataset.get_sample(index)
         d = self.aug(image=X, mask=y, rand=random)
         X = tk.applications.darknet53.preprocess_input(d["image"])
