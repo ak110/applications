@@ -34,30 +34,17 @@ logger = tk.log.get(__name__)
 
 
 @app.command(logfile=False)
-@tk.dl.wrap_session()
 def check():
-    model = create_model()
-    tk.training.check(model, plot_path=models_dir / "model.svg")
+    create_pipeline().check()
 
 
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def train():
     train_set, val_set = load_data()
-    model = create_model(train_set.labels.mean())
-    tk.training.train(
-        model,
-        train_set=train_set,
-        val_set=val_set,
-        train_data_loader=MyDataLoader(data_augmentation=True),
-        val_data_loader=MyDataLoader(),
-        epochs=100,
-        callbacks=[tk.callbacks.CosineAnnealing()],
-        model_path=models_dir / "model.h5",
-        workers=8,
-        data_parallel=False,
-    )
-    pred = tk.models.predict(model, val_set, MyDataLoader(), use_horovod=True)
+    model = create_pipeline()
+    evals = model.train(train_set, val_set)
+    pred = model.predict(val_set)[0]
     if tk.hvd.is_master():
         evals = tk.evaluations.print_regression_metrics(val_set.labels, pred)
         tk.notifications.post_evals(evals)
@@ -67,9 +54,10 @@ def train():
 @tk.dl.wrap_session(use_horovod=True)
 def validate(model=None):
     _, val_set = load_data()
-    model = model or tk.models.load(models_dir / "model.h5")
-    pred = tk.models.predict(model, val_set, MyDataLoader(), use_horovod=True)
-    tk.evaluations.print_regression_metrics(val_set.labels, pred)
+    model = create_pipeline().load(models_dir)
+    pred = model.predict(val_set)[0]
+    if tk.hvd.is_master():
+        tk.evaluations.print_regression_metrics(val_set.labels, pred)
 
 
 def load_data():
@@ -89,6 +77,22 @@ def load_data():
     X_test = ss.transform(X_test.values)
 
     return tk.data.Dataset(X_train, y_train), tk.data.Dataset(X_test, y_test)
+
+
+def create_pipeline():
+    return tk.pipeline.KerasModel(
+        create_model_fn=create_model,
+        train_data_loader=MyDataLoader(data_augmentation=True),
+        val_data_loader=MyDataLoader(),
+        fit_params={
+            "epochs": 100,
+            "callbacks": [tk.callbacks.CosineAnnealing()],
+            "workers": 8,
+        },
+        models_dir=models_dir,
+        model_name_format="model.h5",
+        use_horovod=True,
+    )
 
 
 def create_model(bias=0):
@@ -138,7 +142,7 @@ class MyDataLoader(tk.data.DataLoader):
     """DataLoader"""
 
     def __init__(self, data_augmentation=False):
-        super().__init__(batch_size=batch_size, parallel=True)
+        super().__init__(batch_size=batch_size, parallel=False)
         self.data_augmentation = data_augmentation
 
     def get_data(self, dataset: tk.data.Dataset, index: int):

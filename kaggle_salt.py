@@ -32,27 +32,16 @@ logger = tk.log.get(__name__)
 
 
 @app.command(logfile=False)
-@tk.dl.wrap_session()
 def check():
-    model = create_model()
-    tk.training.check(model, plot_path=models_dir / "model.svg")
+    create_pipeline().check()
 
 
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def train():
     train_set, val_set = load_data()
-    model = create_model()
-    tk.training.train(
-        model,
-        train_set=train_set,
-        val_set=val_set,
-        train_data_loader=MyDataLoader(data_augmentation=True),
-        val_data_loader=MyDataLoader(),
-        epochs=300,
-        callbacks=[tk.callbacks.CosineAnnealing()],
-        model_path=models_dir / "model.h5",
-    )
+    model = create_pipeline()
+    model.train(train_set, val_set)
     _evaluate(model, val_set)
     _predict(model)
 
@@ -61,21 +50,19 @@ def train():
 @tk.dl.wrap_session(use_horovod=True)
 def validate():
     _, val_set = load_data()
-    model = tk.models.load(models_dir / "model.h5")
+    model = create_pipeline().load(models_dir)
     _evaluate(model, val_set)
 
 
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def predict():
-    model = tk.models.load(models_dir / "model.h5")
+    model = create_pipeline().load(models_dir)
     _predict(model)
 
 
 def _evaluate(model, val_set):
-    pred_val = tk.models.predict(
-        model, val_set, MyDataLoader(), use_horovod=True, on_batch_fn=_tta
-    )
+    pred_val = model.predict(val_set)[0](val_set)
     if tk.hvd.is_master():
         evals = tk.evaluations.print_ss_metrics(val_set.labels / 255, pred_val, 0.5)
         tk.notifications.post_evals(evals)
@@ -85,9 +72,7 @@ def _evaluate(model, val_set):
 def _predict(model):
     test_set = load_test_data()
     test_set.labels = np.zeros_like(test_set.data)  # エラー除けのダミー
-    pred_test = tk.models.predict(
-        model, test_set, MyDataLoader(), use_horovod=True, on_batch_fn=_tta
-    )
+    pred_test = model.predict(test_set)[0]
 
     if tk.hvd.is_master():
         df = pd.DataFrame()
@@ -95,16 +80,6 @@ def _predict(model):
         df["rle_mask"] = tk.utils.encode_rl_array(pred_test >= 0.5)
         df.to_csv(str(models_dir / "submission.csv"), index=False)
     tk.hvd.barrier()
-
-
-def _tta(model, X_batch):
-    return np.mean(
-        [
-            model.predict_on_batch(X_batch),
-            model.predict_on_batch(X_batch[:, :, ::-1, :])[:, :, ::-1, :],
-        ],
-        axis=0,
-    )
 
 
 def load_data():
@@ -129,6 +104,29 @@ def _load_image(X):
         [tk.ndimage.load(p, grayscale=True) for p in tk.utils.tqdm(X, desc="load")]
     )
     return X
+
+
+def create_pipeline():
+    return tk.pipeline.KerasModel(
+        create_model_fn=create_model,
+        train_data_loader=MyDataLoader(data_augmentation=True),
+        val_data_loader=MyDataLoader(),
+        fit_params={"epochs": 300, "callbacks": [tk.callbacks.CosineAnnealing()]},
+        models_dir=models_dir,
+        model_name_format="model.h5",
+        use_horovod=True,
+        on_batch_fn=_tta,
+    )
+
+
+def _tta(model, X_batch):
+    return np.mean(
+        [
+            model.predict_on_batch(X_batch),
+            model.predict_on_batch(X_batch[:, :, ::-1, :])[:, :, ::-1, :],
+        ],
+        axis=0,
+    )
 
 
 def create_model():

@@ -25,27 +25,16 @@ logger = tk.log.get(__name__)
 
 
 @app.command(logfile=False)
-@tk.dl.wrap_session()
 def check():
-    model = create_model()
-    tk.training.check(model, plot_path=models_dir / "model.svg")
+    create_pipeline().check()
 
 
 @app.command()
 @tk.dl.wrap_session(use_horovod=True)
 def train():
     train_set, val_set = load_data()
-    model = create_model()
-    tk.training.train(
-        model,
-        train_set=train_set,
-        val_set=val_set,
-        train_data_loader=MyDataLoader(data_augmentation=True),
-        val_data_loader=MyDataLoader(),
-        epochs=300,
-        callbacks=[tk.callbacks.CosineAnnealing()],
-        model_path=models_dir / "model.h5",
-    )
+    model = create_pipeline()
+    model.train(train_set, val_set)
     _evaluate(model, val_set)
 
 
@@ -53,20 +42,13 @@ def train():
 @tk.dl.wrap_session(use_horovod=True)
 def validate():
     _, val_set = load_data()
-    model = tk.models.load(models_dir / "model.h5")
+    model = create_pipeline().load(models_dir)
     _evaluate(model, val_set)
 
 
 def _evaluate(model, val_set):
     if tk.hvd.is_master():
-        pred_val = tk.models.predict(
-            model,
-            val_set,
-            MyDataLoader(),
-            batch_size=batch_size * 2,
-            flow=True,
-            on_batch_fn=_tta,
-        )
+        pred_val = model.predict_flow(val_set)
         evals = tk.evaluations.print_ss_metrics(flow_labels(val_set), pred_val, 0.5)
         tk.notifications.post_evals(evals)
     tk.hvd.barrier()
@@ -74,6 +56,19 @@ def _evaluate(model, val_set):
 
 def load_data():
     return tk.datasets.load_cityscapes(data_dir)
+
+
+def create_pipeline():
+    return tk.pipeline.KerasModel(
+        create_model_fn=create_model,
+        train_data_loader=MyDataLoader(data_augmentation=True),
+        val_data_loader=MyDataLoader(),
+        fit_params={"epochs": 300, "callbacks": [tk.callbacks.CosineAnnealing()]},
+        models_dir=models_dir,
+        model_name_format="model.h5",
+        use_horovod=True,
+        on_batch_fn=_tta,
+    )
 
 
 def _tta(model, X_batch):
