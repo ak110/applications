@@ -19,7 +19,6 @@
 """
 import functools
 import pathlib
-import random
 
 import pandas as pd
 import sklearn.preprocessing
@@ -142,16 +141,22 @@ class MyDataLoader(tk.data.DataLoader):
     """DataLoader"""
 
     def __init__(self, data_augmentation=False):
-        super().__init__(batch_size=batch_size, parallel=False)
+        super().__init__(
+            batch_size=batch_size,
+            data_per_sample=2 if data_augmentation else 1,
+            parallel=False,
+        )
         self.data_augmentation = data_augmentation
 
     def get_data(self, dataset: tk.data.Dataset, index: int):
-        sample1 = dataset.get_sample(index)
+        return dataset.get_data(index)
+
+    def get_sample(self, data: list) -> tuple:
         if self.data_augmentation:
-            sample2 = dataset.get_sample(random.choice(range(len(dataset))))
-            X, y = tk.ndimage.mixup(sample1, sample2, mode="uniform_ex")
+            sample1, sample2 = data
+            X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")
         else:
-            X, y = sample1
+            X, y = super().get_sample(data)
         return X, y
 
 

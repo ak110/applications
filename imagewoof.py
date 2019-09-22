@@ -169,8 +169,8 @@ class MyDataLoader(tk.data.DataLoader):
     def __init__(self, data_augmentation=False):
         super().__init__(
             batch_size=batch_size,
-            parallel=True,
             data_per_sample=2 if data_augmentation else 1,
+            parallel=True,
         )
         self.data_augmentation = data_augmentation
         if self.data_augmentation:
@@ -188,7 +188,7 @@ class MyDataLoader(tk.data.DataLoader):
             self.aug2 = None
 
     def get_data(self, dataset: tk.data.Dataset, index: int):
-        X, y = dataset.get_sample(index)
+        X, y = dataset.get_data(index)
         X = tk.ndimage.load(X)
         X = self.aug1(image=X)["image"]
         y = tk.keras.utils.to_categorical(y, num_classes)

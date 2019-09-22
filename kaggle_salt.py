@@ -52,6 +52,7 @@ def validate():
     _, val_set = load_data()
     model = create_pipeline().load(models_dir)
     _evaluate(model, val_set)
+    _predict(model)
 
 
 @app.command()
@@ -62,7 +63,7 @@ def predict():
 
 
 def _evaluate(model, val_set):
-    pred_val = model.predict(val_set)[0](val_set)
+    pred_val = model.predict(val_set)[0]
     if tk.hvd.is_master():
         evals = tk.evaluations.print_ss_metrics(val_set.labels / 255, pred_val, 0.5)
         tk.notifications.post_evals(evals)
@@ -170,7 +171,7 @@ def create_model():
     x = conv2d(256)(x)
     x = bn()(x)
     x = act()(x)
-    x = conv2d(256 * 4 * 4)(x)
+    x = conv2d(256 * 4 * 4, kernel_size=1)(x)
     x = bn()(x)
     x = act()(x)
     x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/4
@@ -180,7 +181,12 @@ def create_model():
     d = backbone.get_layer("block12_add").output  # 1/4
     d = tk.layers.ScaleGradient(scale=0.1)(d)
     d = conv2d(256)(d)
-    d = bn()(d)
+    d = bn(center=False)(d)
+    x = tk.keras.layers.add([x, d])
+    d = backbone.get_layer("block2_add").output  # 1/1
+    d = tk.layers.ScaleGradient(scale=0.1)(d)
+    d = conv2d(256, kernel_size=4, strides=4)(d)
+    d = bn(center=False)(d)
     x = tk.keras.layers.add([x, d])
     x = blocks(256, 8)(x)
     x = conv2d(
@@ -231,7 +237,7 @@ class MyDataLoader(tk.data.DataLoader):
             self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
 
     def get_data(self, dataset: tk.data.Dataset, index: int):
-        X, y = dataset.get_sample(index)
+        X, y = dataset.get_data(index)
         d = self.aug(image=X, mask=y, rand=random)
         X = tk.applications.darknet53.preprocess_input(d["image"])
         y = d["mask"] / 255

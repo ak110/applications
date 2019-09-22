@@ -211,7 +211,7 @@ class MyDataLoader(tk.data.DataLoader):
             self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
 
     def get_data(self, dataset: tk.data.Dataset, index: int):
-        X, y = dataset.get_sample(index)
+        X, y = dataset.get_data(index)
         X = tk.ndimage.load(X)
         y = tk.ndimage.load(y)
         y = tk.ndimage.mask_to_onehot(

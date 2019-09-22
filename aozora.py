@@ -127,7 +127,7 @@ class MyDataLoader(tk.data.DataLoader):
         self.data_augmentation = data_augmentation
 
     def get_data(self, dataset: tk.data.Dataset, index: int):
-        X, y = dataset.get_sample(index)
+        X, y = dataset.get_data(index)
         X = np.frombuffer(X.replace(" ", "").encode("utf-16-le"), dtype=np.uint16)
         X = tk.keras.preprocessing.sequence.pad_sequences([X], input_shape[0])[0]
         y = tk.keras.utils.to_categorical(y, num_classes)
