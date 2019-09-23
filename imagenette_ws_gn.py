@@ -139,7 +139,9 @@ def create_model():
     x = blocks(512, 4)(x)
     x = tk.layers.GeM2D()(x)
     logits = tk.keras.layers.Dense(
-        num_classes, kernel_regularizer=tk.keras.regularizers.l2(1e-4)
+        num_classes,
+        kernel_initializer="zeros",
+        kernel_regularizer=tk.keras.regularizers.l2(1e-4),
     )(x)
     x = tk.keras.layers.Activation(activation="softmax")(logits)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)

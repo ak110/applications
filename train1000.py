@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""Train with 1000
+"""Train with 1000 (自作Augmentation)
 
-[INFO ] val_loss: 1.536
-[INFO ] val_acc:  0.783
+val_loss: 1.492
+val_acc:  0.796
 
 """
 import functools
 import pathlib
 
 import albumentations as A
-import cv2
 
 import pytoolkit as tk
 
 num_classes = 10
 input_shape = (32, 32, 3)
-batch_size = 32
+batch_size = 64
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
 app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
@@ -137,16 +136,8 @@ class MyDataLoader(tk.data.DataLoader):
         if self.data_augmentation:
             self.aug1 = A.Compose(
                 [
-                    A.PadIfNeeded(
-                        40,
-                        40,
-                        border_mode=cv2.BORDER_CONSTANT,
-                        value=[128, 128, 128],
-                        p=1,
-                    ),
-                    A.RandomCrop(32, 32),
-                    A.HorizontalFlip(),
-                    tk.autoaugment.CIFAR10Policy(),
+                    tk.image.RandomTransform(width=32, height=32),
+                    tk.image.RandomColorAugmentors(noisy=True),
                 ]
             )
             self.aug2 = tk.image.RandomErasing()

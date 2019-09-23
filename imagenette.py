@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。(trainとvalをひっくり返している。)
 
-val_loss: 1.879
-val_acc:  0.867
+val_loss: 1.876
+val_acc:  0.871
 
 """
 import functools
@@ -137,7 +137,9 @@ def create_model():
     x = blocks(512, 4)(x)
     x = tk.layers.GeM2D()(x)
     logits = tk.keras.layers.Dense(
-        num_classes, kernel_regularizer=tk.keras.regularizers.l2(1e-4)
+        num_classes,
+        kernel_initializer="zeros",
+        kernel_regularizer=tk.keras.regularizers.l2(1e-4),
     )(x)
     x = tk.keras.layers.Activation(activation="softmax")(logits)
     model = tk.keras.models.Model(inputs=inputs, outputs=x)
@@ -167,8 +169,6 @@ class MyDataLoader(tk.data.DataLoader):
         if self.data_augmentation:
             self.aug1 = A.Compose(
                 [
-                    tk.image.WrappedTranslateX(p=0.5),
-                    tk.image.WrappedTranslateY(p=0.5),
                     tk.image.RandomTransform(
                         width=train_shape[1],
                         height=train_shape[0],

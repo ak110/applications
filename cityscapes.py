@@ -211,22 +211,22 @@ class MyDataLoader(tk.data.DataLoader):
             self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
 
     def get_data(self, dataset: tk.data.Dataset, index: int):
+        assert isinstance(dataset.metadata, dict)
         X, y = dataset.get_data(index)
         X = tk.ndimage.load(X)
         y = tk.ndimage.load(y)
-        y = tk.ndimage.mask_to_onehot(
-            y, dataset.metadata["class_colors"], append_bg=True  # type: ignore
-        )
         aug = self.aug(image=X, masks=[y[:, :, i] for i in range(y.shape[-1])])
         X = aug["image"]
         y = aug["masks"]
-        y = np.concatenate(y, axis=2)
+        y = tk.ndimage.mask_to_onehot(
+            y, dataset.metadata["class_colors"], append_bg=True
+        )
         X = tk.ndimage.preprocess_tf(X)
-        y = y / 255
         return X, y
 
 
-def flow_labels(dataset):
+def flow_labels(dataset: tk.data.Dataset):
+    assert isinstance(dataset.metadata, dict)
     for y in dataset.labels:
         y = tk.ndimage.load(y)
         y = tk.ndimage.mask_to_onehot(
