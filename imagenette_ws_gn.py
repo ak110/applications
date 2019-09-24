@@ -3,8 +3,8 @@
 
 Weight Standalization + GroupNormalization。重いので普段は使わない。
 
-val_loss: 1.748
-val_acc:  0.863
+val_loss: 1.749
+val_acc:  0.864
 
 """
 import functools
@@ -113,22 +113,10 @@ def create_model():
         return layers
 
     inputs = x = tk.keras.layers.Input((None, None, 3))
-    x = tk.keras.layers.concatenate(
-        [
-            conv2d(16, kernel_size=2, strides=2)(x),
-            conv2d(16, kernel_size=4, strides=2)(x),
-            conv2d(16, kernel_size=6, strides=2)(x),
-            conv2d(16, kernel_size=8, strides=2)(x),
-        ]
-    )  # 1/2
+    x = conv2d(64, kernel_size=8, strides=2)(x)  # 1/2
     x = bn()(x)
     x = act()(x)
-    x = tk.keras.layers.concatenate(
-        [
-            conv2d(64, kernel_size=2, strides=2)(x),
-            conv2d(64, kernel_size=4, strides=2)(x),
-        ]
-    )  # 1/4
+    x = conv2d(128, kernel_size=4, strides=2)(x)  # 1/4
     x = bn()(x)
     x = blocks(128, 2)(x)
     x = down(256)(x)  # 1/8

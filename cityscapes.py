@@ -215,9 +215,9 @@ class MyDataLoader(tk.data.DataLoader):
         X, y = dataset.get_data(index)
         X = tk.ndimage.load(X)
         y = tk.ndimage.load(y)
-        aug = self.aug(image=X, masks=[y[:, :, i] for i in range(y.shape[-1])])
+        aug = self.aug(image=X, mask=y)
         X = aug["image"]
-        y = aug["masks"]
+        y = aug["mask"]
         y = tk.ndimage.mask_to_onehot(
             y, dataset.metadata["class_colors"], append_bg=True
         )

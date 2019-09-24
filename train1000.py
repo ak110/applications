@@ -44,6 +44,37 @@ def validate(model=None):
         tk.evaluations.print_classification_metrics(val_set.labels, pred)
 
 
+@app.command()
+@tk.dl.wrap_session(use_horovod=True)
+def refine():
+    train_set, val_set = tk.datasets.load_train1000()
+    model = create_pipeline().load(models_dir)
+
+    # TODO: なんとかしたい
+
+    model.train_data_loader = model.val_data_loader
+    model.fit_params["epochs"] = 100
+
+    for layer in model.models[0].layers:
+        if isinstance(layer, tk.keras.layers.BatchNormalization):
+            layer.trainable = False
+
+    base_lr = 1e-5 * batch_size * tk.hvd.size()
+    optimizer = tk.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
+
+    def loss(y_true, y_pred):
+        del y_pred
+        logits = model.models[0].layers[-2].output
+        return tk.losses.categorical_crossentropy(
+            y_true, logits, from_logits=True, label_smoothing=0.2
+        )
+
+    tk.models.compile(model.models[0], optimizer, loss, ["acc"])
+
+    evals = model.train(train_set, val_set)
+    tk.notifications.post_evals(evals)
+
+
 def create_pipeline():
     return tk.pipeline.KerasModel(
         create_model_fn=create_model,
