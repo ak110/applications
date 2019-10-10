@@ -71,6 +71,8 @@ def create_pipeline():
 
 
 def create_model():
+    K = tf.keras.backend
+
     conv2d = functools.partial(
         tf.keras.layers.Conv2D,
         kernel_size=3,
@@ -87,7 +89,7 @@ def create_model():
 
     def down(filters):
         def layers(x):
-            in_filters = tk.K.int_shape(x)[-1]
+            in_filters = K.int_shape(x)[-1]
             g = conv2d(in_filters // 8)(x)
             g = bn()(g)
             g = act()(g)

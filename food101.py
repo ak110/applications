@@ -8,7 +8,8 @@ import tensorflow as tf
 import pytoolkit as tk
 
 num_classes = 101
-input_shape = (299, 299, 3)
+train_shape = (299, 299, 3)
+predict_shape = (299, 299, 3)
 batch_size = 16
 data_dir = pathlib.Path(f"data/food-101")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
@@ -18,12 +19,42 @@ logger = tk.log.get(__name__)
 
 @app.command(logfile=False)
 def check():
-    create_pipeline().check()
+    model = create_pipeline().check()
+    train_set, val_set = load_data()
+    model.models = [model.create_model_fn()]
+    model.evaluate(train_set)
+    model.evaluate(val_set, prefix="val_")
 
 
 @app.command(use_horovod=True)
 def train():
     train_set, val_set = load_data()
+
+    inputs = x = tf.keras.layers.Input((None, None, 3))
+    backbone = tk.applications.xception.xception(input_tensor=x)
+    x = backbone.output
+    x = tk.layers.GeM2D()(x)
+    pretrain_model = tf.keras.models.Model(inputs, x)
+    feats_train = tk.models.predict(
+        pretrain_model, train_set, MyDataLoader(), use_horovod=True
+    )
+    feats_val = tk.models.predict(
+        pretrain_model, val_set, MyDataLoader(), use_horovod=True
+    )
+    if tk.hvd.is_master():
+        import sklearn.linear_model
+
+        estimator = sklearn.linear_model.LogisticRegression(
+            C=0.01, solver="lbfgs", multi_class="multinomial", n_jobs=-1
+        )
+        estimator.fit(feats_train, train_set.labels)
+        tk.utils.dump(
+            [estimator.coef_, estimator.intercept_], models_dir / "linear.pkl"
+        )
+        print("acc:    ", estimator.score(feats_train, train_set.labels))
+        print("val_acc:", estimator.score(feats_val, val_set.labels))
+    tk.hvd.barrier()
+
     model = create_pipeline()
     evals = model.train(train_set, val_set)
     tk.notifications.post_evals(evals)
@@ -39,7 +70,7 @@ def validate():
 
 
 def load_data():
-    return tk.datasets.load_trainval_folders(data_dir)
+    return tk.datasets.load_trainval_folders(data_dir, swap=True)
 
 
 def create_pipeline():
@@ -47,7 +78,7 @@ def create_pipeline():
         create_model_fn=create_model,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
-        fit_params={"epochs": 300, "callbacks": [tk.callbacks.CosineAnnealing()]},
+        fit_params={"epochs": 30, "callbacks": [tk.callbacks.CosineAnnealing()]},
         models_dir=models_dir,
         model_name_format="model.h5",
         use_horovod=True,
@@ -55,10 +86,9 @@ def create_pipeline():
 
 
 def create_model():
-    inputs = x = tf.keras.layers.Input(input_shape)
+    inputs = x = tf.keras.layers.Input((None, None, 3))
     backbone = tk.applications.xception.xception(input_tensor=x)
     x = backbone.output
-    x = tk.layers.ScaleGradient(scale=0.1)(x)
     x = tk.layers.GeM2D()(x)
     x = tf.keras.layers.Dense(
         num_classes,
@@ -79,6 +109,10 @@ def create_model():
         )
 
     tk.models.compile(model, optimizer, loss, ["acc"])
+
+    coef, intercept = tk.utils.load(models_dir / "linear.pkl")
+    model.get_layer("logits").set_weights([coef.T, intercept])
+
     return model
 
 
@@ -95,17 +129,22 @@ class MyDataLoader(tk.data.DataLoader):
         if self.data_augmentation:
             self.aug1 = A.Compose(
                 [
-                    tk.image.RandomTransform(width=32, height=32),
+                    tk.image.RandomTransform(
+                        width=train_shape[1],
+                        height=train_shape[0],
+                        base_scale=predict_shape[0] / train_shape[0],
+                    ),
                     tk.image.RandomColorAugmentors(noisy=True),
                 ]
             )
             self.aug2 = tk.image.RandomErasing()
         else:
-            self.aug1 = A.Compose([])
+            self.aug1 = tk.image.Resize(width=predict_shape[1], height=predict_shape[0])
             self.aug2 = None
 
     def get_data(self, dataset: tk.data.Dataset, index: int):
         X, y = dataset.get_data(index)
+        X = tk.ndimage.load(X)
         X = self.aug1(image=X)["image"]
         y = tf.keras.utils.to_categorical(y, num_classes)
         return X, y
@@ -113,8 +152,7 @@ class MyDataLoader(tk.data.DataLoader):
     def get_sample(self, data: list) -> tuple:
         if self.data_augmentation:
             sample1, sample2 = data
-            # sample = tk.ndimage.cut_mix(sample1, sample2)
-            X, y = tk.ndimage.mixup(sample1, sample2, mode="uniform")
+            X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")
             X = self.aug2(image=X)["image"]
         else:
             X, y = super().get_sample(data)

@@ -64,6 +64,8 @@ def create_pipeline():
 
 
 def create_model():
+    K = tf.keras.backend
+
     conv2d = functools.partial(tk.layers.WSConv2D, kernel_size=3)
     bn = functools.partial(
         tk.layers.GroupNormalization, gamma_regularizer=tf.keras.regularizers.l2(1e-4)
@@ -72,7 +74,7 @@ def create_model():
 
     def down(filters):
         def layers(x):
-            in_filters = tk.K.int_shape(x)[-1]
+            in_filters = K.int_shape(x)[-1]
             g = conv2d(in_filters // 8)(x)
             g = bn()(g)
             g = act()(g)
