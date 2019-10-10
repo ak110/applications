@@ -26,6 +26,7 @@ import pathlib
 
 import numpy as np
 import pandas as pd
+import tensorflow as tf
 
 import pytoolkit as tk
 
@@ -42,8 +43,7 @@ def check():
     create_pipeline().check()
 
 
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
+@app.command(use_horovod=True)
 def train():
     train_set, val_set = load_data()
     model = create_pipeline()
@@ -54,8 +54,7 @@ def train():
         tk.notifications.post_evals(evals)
 
 
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
+@app.command(use_horovod=True)
 def validate():
     _, val_set = load_data()
     model = create_pipeline().load(models_dir)
@@ -104,17 +103,17 @@ def create_pipeline():
 
 
 def create_model():
-    inputs = x = tk.keras.layers.Input(input_shape)
-    x = tk.keras.layers.Embedding(65536, 256, mask_zero=True)(x)
-    x1 = tk.keras.layers.GlobalAveragePooling1D()(x)
-    x2 = tk.keras.layers.GlobalMaxPooling1D()(tk.layers.RemoveMask()(x))
-    x = tk.keras.layers.concatenate([x1, x2])
-    x = tk.keras.layers.Dense(
+    inputs = x = tf.keras.layers.Input(input_shape)
+    x = tf.keras.layers.Embedding(65536, 256, mask_zero=True)(x)
+    x1 = tf.keras.layers.GlobalAveragePooling1D()(x)
+    x2 = tf.keras.layers.GlobalMaxPooling1D()(tk.layers.RemoveMask()(x))
+    x = tf.keras.layers.concatenate([x1, x2])
+    x = tf.keras.layers.Dense(
         num_classes,
-        kernel_regularizer=tk.keras.regularizers.l2(1e-4),
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
         activation="softmax",
     )(x)
-    model = tk.keras.models.Model(inputs=inputs, outputs=x)
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
     model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["acc"])
     return model
 
@@ -129,8 +128,8 @@ class MyDataLoader(tk.data.DataLoader):
     def get_data(self, dataset: tk.data.Dataset, index: int):
         X, y = dataset.get_data(index)
         X = np.frombuffer(X.replace(" ", "").encode("utf-16-le"), dtype=np.uint16)
-        X = tk.keras.preprocessing.sequence.pad_sequences([X], input_shape[0])[0]
-        y = tk.keras.utils.to_categorical(y, num_classes)
+        X = tf.keras.preprocessing.sequence.pad_sequences([X], input_shape[0])[0]
+        y = tf.keras.utils.to_categorical(y, num_classes)
         return X, y
 
 

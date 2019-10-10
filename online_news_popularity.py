@@ -22,6 +22,7 @@ import pathlib
 
 import pandas as pd
 import sklearn.preprocessing
+import tensorflow as tf
 
 import pytoolkit as tk
 
@@ -37,8 +38,7 @@ def check():
     create_pipeline().check()
 
 
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
+@app.command(use_horovod=True)
 def train():
     train_set, val_set = load_data()
     model = create_pipeline()
@@ -49,8 +49,7 @@ def train():
         tk.notifications.post_evals(evals)
 
 
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
+@app.command(use_horovod=True)
 def validate(model=None):
     _, val_set = load_data()
     model = create_pipeline().load(models_dir)
@@ -96,41 +95,41 @@ def create_pipeline():
 
 def create_model(bias=0):
     dense = functools.partial(
-        tk.keras.layers.Dense,
+        tf.keras.layers.Dense,
         use_bias=False,
         kernel_initializer="he_uniform",
-        kernel_regularizer=tk.keras.regularizers.l2(1e-4),
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
     )
     bn = functools.partial(
-        tk.keras.layers.BatchNormalization,
-        gamma_regularizer=tk.keras.regularizers.l2(1e-5),
+        tf.keras.layers.BatchNormalization,
+        gamma_regularizer=tf.keras.regularizers.l2(1e-5),
     )
-    act = functools.partial(tk.keras.layers.Activation, activation="elu")
+    act = functools.partial(tf.keras.layers.Activation, activation="elu")
 
-    inputs = x = tk.keras.layers.Input(input_shape)
+    inputs = x = tf.keras.layers.Input(input_shape)
     x = dense(512)(x)
     for _ in range(3):
         sc = x
         x = bn()(x)
         x = act()(x)
-        x = tk.keras.layers.Dropout(0.5)(x)
+        x = tf.keras.layers.Dropout(0.5)(x)
         x = dense(512)(x)
         x = bn()(x)
         x = act()(x)
-        x = tk.keras.layers.Dropout(0.5)(x)
+        x = tf.keras.layers.Dropout(0.5)(x)
         x = dense(512, kernel_initializer="zeros")(x)
-        x = tk.keras.layers.add([sc, x])
+        x = tf.keras.layers.add([sc, x])
     x = bn()(x)
     x = act()(x)
-    x = tk.keras.layers.Dropout(0.5)(x)
-    x = tk.keras.layers.Dense(
+    x = tf.keras.layers.Dropout(0.5)(x)
+    x = tf.keras.layers.Dense(
         1,
-        kernel_regularizer=tk.keras.regularizers.l2(1e-4),
-        bias_initializer=tk.keras.initializers.constant(bias),
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        bias_initializer=tf.keras.initializers.constant(bias),
     )(x)
-    model = tk.keras.models.Model(inputs=inputs, outputs=x)
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
     base_lr = 3e-4 * batch_size * tk.hvd.size()
-    optimizer = tk.keras.optimizers.SGD(
+    optimizer = tf.keras.optimizers.SGD(
         lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
     )
     tk.models.compile(model, optimizer, "mse", ["mae"])

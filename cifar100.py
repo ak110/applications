@@ -9,6 +9,7 @@ import functools
 import pathlib
 
 import albumentations as A
+import tensorflow as tf
 
 import pytoolkit as tk
 
@@ -25,8 +26,7 @@ def check():
     create_pipeline().check()
 
 
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
+@app.command(use_horovod=True)
 def train():
     train_set, val_set = tk.datasets.load_cifar100()
     model = create_pipeline()
@@ -34,8 +34,7 @@ def train():
     tk.notifications.post_evals(evals)
 
 
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
+@app.command(use_horovod=True)
 def validate():
     _, val_set = tk.datasets.load_cifar100()
     model = create_pipeline().load(models_dir)
@@ -58,18 +57,18 @@ def create_pipeline():
 
 def create_model():
     conv2d = functools.partial(
-        tk.keras.layers.Conv2D,
+        tf.keras.layers.Conv2D,
         kernel_size=3,
         padding="same",
         use_bias=False,
         kernel_initializer="he_uniform",
-        kernel_regularizer=tk.keras.regularizers.l2(1e-4),
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
     )
     bn = functools.partial(
-        tk.keras.layers.BatchNormalization,
-        gamma_regularizer=tk.keras.regularizers.l2(1e-4),
+        tf.keras.layers.BatchNormalization,
+        gamma_regularizer=tf.keras.regularizers.l2(1e-4),
     )
-    act = functools.partial(tk.keras.layers.Activation, "relu")
+    act = functools.partial(tf.keras.layers.Activation, "relu")
 
     def down(filters):
         def layers(x):
@@ -89,14 +88,14 @@ def create_model():
                 x = conv2d(filters)(x)
                 # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
                 x = bn(gamma_initializer="zeros")(x)
-                x = tk.keras.layers.add([sc, x])
+                x = tf.keras.layers.add([sc, x])
             x = bn()(x)
             x = act()(x)
             return x
 
         return layers
 
-    inputs = x = tk.keras.layers.Input(input_shape)
+    inputs = x = tf.keras.layers.Input(input_shape)
     x = conv2d(128)(x)
     x = bn()(x)
     x = blocks(128, 8)(x)
@@ -104,14 +103,14 @@ def create_model():
     x = blocks(256, 8)(x)
     x = down(512)(x)
     x = blocks(512, 8)(x)
-    x = tk.keras.layers.GlobalAveragePooling2D()(x)
-    logits = tk.keras.layers.Dense(
-        num_classes, kernel_regularizer=tk.keras.regularizers.l2(1e-4)
+    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    logits = tf.keras.layers.Dense(
+        num_classes, kernel_regularizer=tf.keras.regularizers.l2(1e-4)
     )(x)
-    x = tk.keras.layers.Activation(activation="softmax")(logits)
-    model = tk.keras.models.Model(inputs=inputs, outputs=x)
+    x = tf.keras.layers.Activation(activation="softmax")(logits)
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
     base_lr = 1e-3 * batch_size * tk.hvd.size()
-    optimizer = tk.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
+    optimizer = tf.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
 
     def loss(y_true, y_pred):
         del y_pred
@@ -148,7 +147,7 @@ class MyDataLoader(tk.data.DataLoader):
     def get_data(self, dataset: tk.data.Dataset, index: int):
         X, y = dataset.get_data(index)
         X = self.aug1(image=X)["image"]
-        y = tk.keras.utils.to_categorical(y, num_classes)
+        y = tf.keras.utils.to_categorical(y, num_classes)
         return X, y
 
     def get_sample(self, data: list) -> tuple:

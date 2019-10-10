@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Train with 1000 (自作Augmentation)
-
-val_loss: 1.492
-val_acc:  0.796
-
-"""
-import functools
+"""転移学習の練習用コード。(Food-101)"""
 import pathlib
 
 import albumentations as A
@@ -13,9 +7,10 @@ import tensorflow as tf
 
 import pytoolkit as tk
 
-num_classes = 10
-input_shape = (32, 32, 3)
-batch_size = 64
+num_classes = 101
+input_shape = (299, 299, 3)
+batch_size = 16
+data_dir = pathlib.Path(f"data/food-101")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
 app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
@@ -28,49 +23,23 @@ def check():
 
 @app.command(use_horovod=True)
 def train():
-    train_set, val_set = tk.datasets.load_train1000()
+    train_set, val_set = load_data()
     model = create_pipeline()
     evals = model.train(train_set, val_set)
     tk.notifications.post_evals(evals)
 
 
 @app.command(use_horovod=True)
-def validate(model=None):
-    _, val_set = tk.datasets.load_train1000()
+def validate():
+    _, val_set = load_data()
     model = create_pipeline().load(models_dir)
     pred = model.predict(val_set)[0]
     if tk.hvd.is_master():
         tk.evaluations.print_classification_metrics(val_set.labels, pred)
 
 
-@app.command(use_horovod=True)
-def refine():
-    train_set, val_set = tk.datasets.load_train1000()
-    model = create_pipeline().load(models_dir)
-
-    # TODO: なんとかしたい
-
-    model.train_data_loader = model.val_data_loader
-    model.fit_params["epochs"] = 100
-
-    for layer in model.models[0].layers:
-        if isinstance(layer, tf.keras.layers.BatchNormalization):
-            layer.trainable = False
-
-    base_lr = 1e-5 * batch_size * tk.hvd.size()
-    optimizer = tf.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
-
-    def loss(y_true, y_pred):
-        del y_pred
-        logits = model.models[0].layers[-2].output
-        return tk.losses.categorical_crossentropy(
-            y_true, logits, from_logits=True, label_smoothing=0.2
-        )
-
-    tk.models.compile(model.models[0], optimizer, loss, ["acc"])
-
-    evals = model.train(train_set, val_set)
-    tk.notifications.post_evals(evals)
+def load_data():
+    return tk.datasets.load_trainval_folders(data_dir)
 
 
 def create_pipeline():
@@ -78,7 +47,7 @@ def create_pipeline():
         create_model_fn=create_model,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
-        fit_params={"epochs": 1800, "callbacks": [tk.callbacks.CosineAnnealing()]},
+        fit_params={"epochs": 300, "callbacks": [tk.callbacks.CosineAnnealing()]},
         models_dir=models_dir,
         model_name_format="model.h5",
         use_horovod=True,
@@ -86,64 +55,25 @@ def create_pipeline():
 
 
 def create_model():
-    conv2d = functools.partial(
-        tf.keras.layers.Conv2D,
-        kernel_size=3,
-        padding="same",
-        use_bias=False,
-        kernel_initializer="he_uniform",
-        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-    )
-    bn = functools.partial(
-        tf.keras.layers.BatchNormalization,
-        gamma_regularizer=tf.keras.regularizers.l2(1e-4),
-    )
-    act = functools.partial(tf.keras.layers.Activation, "relu")
-
-    def down(filters):
-        def layers(x):
-            x = conv2d(filters, kernel_size=4, strides=2)(x)
-            x = bn()(x)
-            return x
-
-        return layers
-
-    def blocks(filters, count):
-        def layers(x):
-            for _ in range(count):
-                sc = x
-                x = conv2d(filters)(x)
-                x = bn()(x)
-                x = act()(x)
-                x = conv2d(filters)(x)
-                # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
-                x = bn(gamma_initializer="zeros")(x)
-                x = tf.keras.layers.add([sc, x])
-            x = bn()(x)
-            x = act()(x)
-            return x
-
-        return layers
-
     inputs = x = tf.keras.layers.Input(input_shape)
-    x = conv2d(128)(x)
-    x = bn()(x)
-    x = blocks(128, 8)(x)
-    x = down(256)(x)
-    x = blocks(256, 8)(x)
-    x = down(512)(x)
-    x = blocks(512, 8)(x)
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    logits = tf.keras.layers.Dense(
-        num_classes, kernel_regularizer=tf.keras.regularizers.l2(1e-4)
+    backbone = tk.applications.xception.xception(input_tensor=x)
+    x = backbone.output
+    x = tk.layers.ScaleGradient(scale=0.1)(x)
+    x = tk.layers.GeM2D()(x)
+    x = tf.keras.layers.Dense(
+        num_classes,
+        kernel_initializer="zeros",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        name="logits",
     )(x)
-    x = tf.keras.layers.Activation(activation="softmax")(logits)
+    x = tf.keras.layers.Activation(activation="softmax")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
     base_lr = 1e-3 * batch_size * tk.hvd.size()
     optimizer = tf.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
 
     def loss(y_true, y_pred):
         del y_pred
+        logits = model.get_layer("logits").output
         return tk.losses.categorical_crossentropy(
             y_true, logits, from_logits=True, label_smoothing=0.2
         )

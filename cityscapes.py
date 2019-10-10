@@ -12,6 +12,7 @@ import pathlib
 
 import albumentations as A
 import numpy as np
+import tensorflow as tf
 
 import pytoolkit as tk
 
@@ -29,8 +30,7 @@ def check():
     create_pipeline().check()
 
 
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
+@app.command(use_horovod=True)
 def train():
     train_set, val_set = load_data()
     model = create_pipeline()
@@ -38,8 +38,7 @@ def train():
     _evaluate(model, val_set)
 
 
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
+@app.command(use_horovod=True)
 def validate():
     _, val_set = load_data()
     model = create_pipeline().load(models_dir)
@@ -84,9 +83,9 @@ def _tta(model, X_batch):
 def create_model():
     conv2d = functools.partial(tk.layers.WSConv2D, kernel_size=3)
     bn = functools.partial(
-        tk.layers.GroupNormalization, gamma_regularizer=tk.keras.regularizers.l2(1e-4)
+        tk.layers.GroupNormalization, gamma_regularizer=tf.keras.regularizers.l2(1e-4)
     )
-    act = functools.partial(tk.keras.layers.Activation, "relu")
+    act = functools.partial(tf.keras.layers.Activation, "relu")
 
     def down(filters):
         def layers(x):
@@ -94,17 +93,17 @@ def create_model():
             g = conv2d(in_filters // 8)(x)
             g = bn()(g)
             g = act()(g)
-            g = tk.keras.layers.Conv2D(
+            g = tf.keras.layers.Conv2D(
                 in_filters,
                 3,
                 padding="same",
                 kernel_initializer="he_uniform",
-                kernel_regularizer=tk.keras.regularizers.l2(1e-4),
+                kernel_regularizer=tf.keras.regularizers.l2(1e-4),
                 use_bias=True,
                 activation="sigmoid",
             )(g)
-            x = tk.keras.layers.multiply([x, g])
-            x = tk.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
+            x = tf.keras.layers.multiply([x, g])
+            x = tf.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
             x = tk.layers.BlurPooling2D(taps=4)(x)
             x = conv2d(filters)(x)
             x = bn()(x)
@@ -122,15 +121,15 @@ def create_model():
                 x = conv2d(filters)(x)
                 # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
                 x = bn(gamma_initializer="zeros")(x)
-                x = tk.keras.layers.add([sc, x])
+                x = tf.keras.layers.add([sc, x])
             x = bn()(x)
             x = act()(x)
             return x
 
         return layers
 
-    inputs = x = tk.keras.layers.Input(input_shape)
-    x = tk.keras.layers.concatenate(
+    inputs = x = tf.keras.layers.Input(input_shape)
+    x = tf.keras.layers.concatenate(
         [
             conv2d(16, kernel_size=2, strides=2)(x),
             conv2d(16, kernel_size=4, strides=2)(x),
@@ -157,23 +156,23 @@ def create_model():
     x = conv2d(128)(x)
     x = bn()(x)
     d = bn()(conv2d(128)(d))
-    x = tk.keras.layers.add([x, d])
+    x = tf.keras.layers.add([x, d])
     x = blocks(128, 3)(x)
-    x = tk.keras.layers.Conv2D(
+    x = tf.keras.layers.Conv2D(
         num_classes * 4 * 4,
         kernel_size=1,
         padding="same",
         kernel_initializer="he_uniform",
-        kernel_regularizer=tk.keras.regularizers.l2(1e-4),
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
         use_bias=True,
-        bias_initializer=tk.keras.initializers.constant(tk.math.logit(0.01)),
+        bias_initializer=tf.keras.initializers.constant(tk.math.logit(0.01)),
     )(x)
     x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/1
     logits = x
-    x = tk.keras.layers.Activation(activation="softmax")(logits)
-    model = tk.keras.models.Model(inputs=inputs, outputs=x)
+    x = tf.keras.layers.Activation(activation="softmax")(logits)
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
     base_lr = 1e-3 * batch_size * tk.hvd.size()
-    optimizer = tk.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
+    optimizer = tf.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
 
     def loss(y_true, y_pred):
         del y_pred
@@ -232,7 +231,6 @@ def flow_labels(dataset: tk.data.Dataset):
         y = tk.ndimage.mask_to_onehot(
             y, dataset.metadata["class_colors"], append_bg=True
         )
-        y = y / 255
         yield y
 
 

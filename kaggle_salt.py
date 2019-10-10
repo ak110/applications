@@ -20,6 +20,7 @@ import random
 import albumentations as A
 import numpy as np
 import pandas as pd
+import tensorflow as tf
 
 import pytoolkit as tk
 
@@ -36,8 +37,7 @@ def check():
     create_pipeline().check()
 
 
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
+@app.command(use_horovod=True)
 def train():
     train_set, val_set = load_data()
     model = create_pipeline()
@@ -46,8 +46,7 @@ def train():
     _predict(model)
 
 
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
+@app.command(use_horovod=True)
 def validate():
     _, val_set = load_data()
     model = create_pipeline().load(models_dir)
@@ -55,8 +54,7 @@ def validate():
     _predict(model)
 
 
-@app.command()
-@tk.dl.wrap_session(use_horovod=True)
+@app.command(use_horovod=True)
 def predict():
     model = create_pipeline().load(models_dir)
     _predict(model)
@@ -132,18 +130,18 @@ def _tta(model, X_batch):
 
 def create_model():
     conv2d = functools.partial(
-        tk.keras.layers.Conv2D,
+        tf.keras.layers.Conv2D,
         kernel_size=3,
         padding="same",
         use_bias=False,
         kernel_initializer="he_uniform",
-        kernel_regularizer=tk.keras.regularizers.l2(1e-4),
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
     )
     bn = functools.partial(
-        tk.keras.layers.BatchNormalization,
-        gamma_regularizer=tk.keras.regularizers.l2(1e-4),
+        tf.keras.layers.BatchNormalization,
+        gamma_regularizer=tf.keras.regularizers.l2(1e-4),
     )
-    act = functools.partial(tk.keras.layers.Activation, "relu")
+    act = functools.partial(tf.keras.layers.Activation, "relu")
 
     def blocks(filters, count):
         def layers(x):
@@ -155,16 +153,16 @@ def create_model():
                 x = conv2d(filters)(x)
                 # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
                 x = bn(gamma_initializer="zeros")(x)
-                x = tk.keras.layers.add([sc, x])
+                x = tf.keras.layers.add([sc, x])
             x = bn()(x)
             x = act()(x)
             return x
 
         return layers
 
-    inputs = x = tk.keras.layers.Input(input_shape)
+    inputs = x = tf.keras.layers.Input(input_shape)
     x = tk.layers.Pad2D(((5, 6), (5, 6)), mode="reflect")(x)  # 112
-    x = tk.keras.layers.concatenate([x, x, x])
+    x = tf.keras.layers.concatenate([x, x, x])
     backbone = tk.applications.darknet53.darknet53(input_tensor=x, for_small=True)
     x = backbone.output
     x = tk.layers.ScaleGradient(scale=0.1)(x)
@@ -182,31 +180,31 @@ def create_model():
     d = tk.layers.ScaleGradient(scale=0.1)(d)
     d = conv2d(256)(d)
     d = bn(center=False)(d)
-    x = tk.keras.layers.add([x, d])
+    x = tf.keras.layers.add([x, d])
     d = backbone.get_layer("block2_add").output  # 1/1
     d = tk.layers.ScaleGradient(scale=0.1)(d)
     d = conv2d(256, kernel_size=4, strides=4)(d)
     d = bn(center=False)(d)
-    x = tk.keras.layers.add([x, d])
+    x = tf.keras.layers.add([x, d])
     x = blocks(256, 8)(x)
     x = conv2d(
         1 * 4 * 4,
         use_bias=True,
-        bias_initializer=tk.keras.initializers.constant(tk.math.logit(0.01)),
+        bias_initializer=tf.keras.initializers.constant(tk.math.logit(0.01)),
     )(x)
     x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/1
-    x = tk.keras.layers.Cropping2D(((5, 6), (5, 6)))(x)  # 101
+    x = tf.keras.layers.Cropping2D(((5, 6), (5, 6)))(x)  # 101
     logits = x
-    x = tk.keras.layers.Activation("sigmoid")(x)
+    x = tf.keras.layers.Activation("sigmoid")(x)
 
-    model = tk.keras.models.Model(inputs=inputs, outputs=x)
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
     def loss(y_true, y_pred):
         del y_pred
         return tk.losses.lovasz_hinge(y_true, logits, from_logits=True)
 
     base_lr = 1e-3 * batch_size * tk.hvd.size()
-    optimizer = tk.keras.optimizers.SGD(
+    optimizer = tf.keras.optimizers.SGD(
         lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
     )
     tk.models.compile(
