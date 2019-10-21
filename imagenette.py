@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。(trainとvalをひっくり返している。)
 
-val_loss: 1.876
-val_acc:  0.871
+val_loss: 1.261
+val_acc:  0.877
 
 """
 import functools
@@ -10,6 +10,7 @@ import pathlib
 
 import albumentations as A
 import tensorflow as tf
+import tensorflow_addons as tfa
 
 import pytoolkit as tk
 
@@ -56,6 +57,7 @@ def create_model():
         fit_params={"epochs": 1800, "callbacks": [tk.callbacks.CosineAnnealing()]},
         models_dir=models_dir,
         model_name_format="model.h5",
+        skip_if_exists=False,
         use_horovod=True,
     )
 
@@ -72,11 +74,11 @@ class MyModel(tk.pipeline.KerasModel):
             padding="same",
             use_bias=False,
             kernel_initializer="he_uniform",
-            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            # kernel_regularizer=tf.keras.regularizers.l2(1e-4),
         )
         bn = functools.partial(
             tf.keras.layers.BatchNormalization,
-            gamma_regularizer=tf.keras.regularizers.l2(1e-4),
+            # gamma_regularizer=tf.keras.regularizers.l2(1e-4),
         )
         act = functools.partial(tf.keras.layers.Activation, "relu")
 
@@ -142,7 +144,7 @@ class MyModel(tk.pipeline.KerasModel):
         x = tf.keras.layers.Dense(
             num_classes,
             kernel_initializer="zeros",
-            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            # kernel_regularizer=tf.keras.regularizers.l2(1e-4),
             name="logits",
         )(x)
         x = tf.keras.layers.Activation(activation="softmax")(x)
@@ -152,7 +154,9 @@ class MyModel(tk.pipeline.KerasModel):
     def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
         del mode
         base_lr = 1e-3 * batch_size * tk.hvd.size()
-        optimizer = tf.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
+        optimizer = tfa.optimizers.SGDW(
+            lr=base_lr, weight_decay=1e-4, momentum=0.9, nesterov=True
+        )
         return optimizer
 
     def create_loss(self, model: tf.keras.models.Model) -> tuple:

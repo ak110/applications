@@ -112,18 +112,9 @@ def create_model():
         fit_params={"epochs": 300, "callbacks": [tk.callbacks.CosineAnnealing()]},
         models_dir=models_dir,
         model_name_format="model.h5",
+        skip_if_exists=False,
         use_horovod=True,
         on_batch_fn=_tta,
-    )
-
-
-def _tta(model, X_batch):
-    return np.mean(
-        [
-            model.predict_on_batch(X_batch),
-            model.predict_on_batch(X_batch[:, :, ::-1, :])[:, :, ::-1, :],
-        ],
-        axis=0,
     )
 
 
@@ -246,6 +237,16 @@ class MyDataLoader(tk.data.DataLoader):
         y = d["mask"] / 255
         y = y.reshape(input_shape)
         return X, y
+
+
+def _tta(model, X_batch):
+    return np.mean(
+        [
+            model.predict_on_batch(X_batch),
+            model.predict_on_batch(X_batch[:, :, ::-1, :])[:, :, ::-1, :],
+        ],
+        axis=0,
+    )
 
 
 if __name__ == "__main__":

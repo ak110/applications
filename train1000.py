@@ -50,6 +50,7 @@ def create_model():
         fit_params={"epochs": 1800, "callbacks": [tk.callbacks.CosineAnnealing()]},
         models_dir=models_dir,
         model_name_format="model.h5",
+        skip_if_exists=False,
         use_horovod=True,
     )
 

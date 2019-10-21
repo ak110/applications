@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""転移学習の練習用コード。(Food-101)"""
+"""転移学習の練習用コード。(Food-101)
+
+val_loss: 2.095
+val_acc:  0.798
+
+"""
 import pathlib
 
 import albumentations as A
@@ -80,6 +85,7 @@ def create_model():
         fit_params={"epochs": 30, "callbacks": [tk.callbacks.CosineAnnealing()]},
         models_dir=models_dir,
         model_name_format="model.h5",
+        skip_if_exists=False,
         use_horovod=True,
     )
 
@@ -95,7 +101,7 @@ class MyModel(tk.pipeline.KerasModel):
         x = tf.keras.layers.Dense(
             num_classes,
             kernel_initializer="zeros",
-            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            # kernel_regularizer=tf.keras.regularizers.l2(1e-4),
             name="logits",
         )(x)
         x = tf.keras.layers.Activation(activation="softmax")(x)

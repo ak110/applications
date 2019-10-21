@@ -12,6 +12,7 @@ import pathlib
 
 import albumentations as A
 import tensorflow as tf
+import tensorflow_addons as tfa
 
 import pytoolkit as tk
 
@@ -58,6 +59,7 @@ def create_model():
         fit_params={"epochs": 1800, "callbacks": [tk.callbacks.CosineAnnealing()]},
         models_dir=models_dir,
         model_name_format="model.h5",
+        skip_if_exists=False,
         use_horovod=True,
     )
 
@@ -71,7 +73,7 @@ class MyModel(tk.pipeline.KerasModel):
         conv2d = functools.partial(tk.layers.WSConv2D, kernel_size=3)
         bn = functools.partial(
             tk.layers.GroupNormalization,
-            gamma_regularizer=tf.keras.regularizers.l2(1e-4),
+            # gamma_regularizer=tf.keras.regularizers.l2(1e-4),
         )
         act = functools.partial(tf.keras.layers.Activation, "relu")
 
@@ -86,7 +88,7 @@ class MyModel(tk.pipeline.KerasModel):
                     3,
                     padding="same",
                     kernel_initializer="he_uniform",
-                    kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+                    # kernel_regularizer=tf.keras.regularizers.l2(1e-4),
                     use_bias=True,
                     activation="sigmoid",
                 )(g)
@@ -133,7 +135,7 @@ class MyModel(tk.pipeline.KerasModel):
         x = tf.keras.layers.Dense(
             num_classes,
             kernel_initializer="zeros",
-            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            # kernel_regularizer=tf.keras.regularizers.l2(1e-4),
             name="logits",
         )(x)
         x = tf.keras.layers.Activation(activation="softmax")(x)
@@ -143,7 +145,9 @@ class MyModel(tk.pipeline.KerasModel):
     def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
         del mode
         base_lr = 1e-3 * batch_size * tk.hvd.size()
-        optimizer = tf.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
+        optimizer = tfa.optimizers.SGDW(
+            lr=base_lr, weight_decay=1e-4, momentum=0.9, nesterov=True
+        )
         return optimizer
 
     def create_loss(self, model: tf.keras.models.Model) -> tuple:
