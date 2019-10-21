@@ -23,13 +23,13 @@ logger = tk.log.get(__name__)
 
 @app.command(logfile=False)
 def check():
-    create_pipeline().check()
+    create_model().check()
 
 
 @app.command(use_horovod=True)
 def train():
     train_set, val_set = tk.datasets.load_cifar100()
-    model = create_pipeline()
+    model = create_model()
     evals = model.train(train_set, val_set)
     tk.notifications.post_evals(evals)
 
@@ -37,15 +37,14 @@ def train():
 @app.command(use_horovod=True)
 def validate():
     _, val_set = tk.datasets.load_cifar100()
-    model = create_pipeline().load(models_dir)
+    model = create_model().load(models_dir)
     pred = model.predict(val_set)[0]
     if tk.hvd.is_master():
         tk.evaluations.print_classification_metrics(val_set.labels, pred)
 
 
-def create_pipeline():
-    return tk.pipeline.KerasModel(
-        create_model_fn=create_model,
+def create_model():
+    return MyModel(
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
         fit_params={"epochs": 300, "callbacks": [tk.callbacks.CosineAnnealing()]},
@@ -55,71 +54,83 @@ def create_pipeline():
     )
 
 
-def create_model():
-    conv2d = functools.partial(
-        tf.keras.layers.Conv2D,
-        kernel_size=3,
-        padding="same",
-        use_bias=False,
-        kernel_initializer="he_uniform",
-        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-    )
-    bn = functools.partial(
-        tf.keras.layers.BatchNormalization,
-        gamma_regularizer=tf.keras.regularizers.l2(1e-4),
-    )
-    act = functools.partial(tf.keras.layers.Activation, "relu")
+class MyModel(tk.pipeline.KerasModel):
+    """KerasModel"""
 
-    def down(filters):
-        def layers(x):
-            x = conv2d(filters, kernel_size=4, strides=2)(x)
-            x = bn()(x)
-            return x
+    def create_network(self) -> tf.keras.models.Model:
+        conv2d = functools.partial(
+            tf.keras.layers.Conv2D,
+            kernel_size=3,
+            padding="same",
+            use_bias=False,
+            kernel_initializer="he_uniform",
+            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        )
+        bn = functools.partial(
+            tf.keras.layers.BatchNormalization,
+            gamma_regularizer=tf.keras.regularizers.l2(1e-4),
+        )
+        act = functools.partial(tf.keras.layers.Activation, "relu")
 
-        return layers
+        def down(filters):
+            def layers(x):
+                x = conv2d(filters, kernel_size=4, strides=2)(x)
+                x = bn()(x)
+                return x
 
-    def blocks(filters, count):
-        def layers(x):
-            for _ in range(count):
-                sc = x
-                x = conv2d(filters)(x)
+            return layers
+
+        def blocks(filters, count):
+            def layers(x):
+                for _ in range(count):
+                    sc = x
+                    x = conv2d(filters)(x)
+                    x = bn()(x)
+                    x = act()(x)
+                    x = conv2d(filters)(x)
+                    # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
+                    x = bn(gamma_initializer="zeros")(x)
+                    x = tf.keras.layers.add([sc, x])
                 x = bn()(x)
                 x = act()(x)
-                x = conv2d(filters)(x)
-                # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
-                x = bn(gamma_initializer="zeros")(x)
-                x = tf.keras.layers.add([sc, x])
-            x = bn()(x)
-            x = act()(x)
-            return x
+                return x
 
-        return layers
+            return layers
 
-    inputs = x = tf.keras.layers.Input(input_shape)
-    x = conv2d(128)(x)
-    x = bn()(x)
-    x = blocks(128, 8)(x)
-    x = down(256)(x)
-    x = blocks(256, 8)(x)
-    x = down(512)(x)
-    x = blocks(512, 8)(x)
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    logits = tf.keras.layers.Dense(
-        num_classes, kernel_regularizer=tf.keras.regularizers.l2(1e-4)
-    )(x)
-    x = tf.keras.layers.Activation(activation="softmax")(logits)
-    model = tf.keras.models.Model(inputs=inputs, outputs=x)
-    base_lr = 1e-3 * batch_size * tk.hvd.size()
-    optimizer = tf.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
+        inputs = x = tf.keras.layers.Input(input_shape)
+        x = conv2d(128)(x)
+        x = bn()(x)
+        x = blocks(128, 8)(x)
+        x = down(256)(x)
+        x = blocks(256, 8)(x)
+        x = down(512)(x)
+        x = blocks(512, 8)(x)
+        x = tf.keras.layers.GlobalAveragePooling2D()(x)
+        x = tf.keras.layers.Dense(
+            num_classes,
+            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            name="logits",
+        )(x)
+        x = tf.keras.layers.Activation(activation="softmax")(x)
+        model = tf.keras.models.Model(inputs=inputs, outputs=x)
+        return model
 
-    def loss(y_true, y_pred):
-        del y_pred
-        return tk.losses.categorical_crossentropy(
-            y_true, logits, from_logits=True, label_smoothing=0.2
-        )
+    def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
+        del mode
+        base_lr = 1e-3 * batch_size * tk.hvd.size()
+        optimizer = tf.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
+        return optimizer
 
-    tk.models.compile(model, optimizer, loss, ["acc"])
-    return model
+    def create_loss(self, model: tf.keras.models.Model) -> tuple:
+        def loss(y_true, y_pred):
+            del y_pred
+            logits = model.get_layer("logits").output
+            return tk.losses.categorical_crossentropy(
+                y_true, logits, from_logits=True, label_smoothing=0.2
+            )
+
+        metrics = ["acc"]
+        return loss, metrics
 
 
 class MyDataLoader(tk.data.DataLoader):

@@ -40,13 +40,13 @@ logger = tk.log.get(__name__)
 
 @app.command(logfile=False)
 def check():
-    create_pipeline().check()
+    create_model().check()
 
 
 @app.command(use_horovod=True)
 def train():
     train_set, val_set = load_data()
-    model = create_pipeline()
+    model = create_model()
     model.train(train_set, val_set)
     pred = model.predict(val_set)[0]
     if tk.hvd.is_master():
@@ -57,7 +57,7 @@ def train():
 @app.command(use_horovod=True)
 def validate():
     _, val_set = load_data()
-    model = create_pipeline().load(models_dir)
+    model = create_model().load(models_dir)
     pred = model.predict(val_set)[0]
     tk.evaluations.print_classification_metrics(val_set.labels, pred)
 
@@ -86,9 +86,8 @@ def load_data():
     return tk.data.Dataset(X_train, y_train), tk.data.Dataset(X_test, y_test)
 
 
-def create_pipeline():
-    return tk.pipeline.KerasModel(
-        create_model_fn=create_model,
+def create_model():
+    return MyModel(
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
         fit_params={
@@ -102,20 +101,34 @@ def create_pipeline():
     )
 
 
-def create_model():
-    inputs = x = tf.keras.layers.Input(input_shape)
-    x = tf.keras.layers.Embedding(65536, 256, mask_zero=True)(x)
-    x1 = tf.keras.layers.GlobalAveragePooling1D()(x)
-    x2 = tf.keras.layers.GlobalMaxPooling1D()(tk.layers.RemoveMask()(x))
-    x = tf.keras.layers.concatenate([x1, x2])
-    x = tf.keras.layers.Dense(
-        num_classes,
-        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-        activation="softmax",
-    )(x)
-    model = tf.keras.models.Model(inputs=inputs, outputs=x)
-    model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["acc"])
-    return model
+class MyModel(tk.pipeline.KerasModel):
+    """KerasModel"""
+
+    def create_network(self) -> tf.keras.models.Model:
+        inputs = x = tf.keras.layers.Input(input_shape)
+        x = tf.keras.layers.Embedding(65536, 256, mask_zero=True)(x)
+        x1 = tf.keras.layers.GlobalAveragePooling1D()(x)
+        x2 = tf.keras.layers.GlobalMaxPooling1D()(tk.layers.RemoveMask()(x))
+        x = tf.keras.layers.concatenate([x1, x2])
+        x = tf.keras.layers.Dense(
+            num_classes,
+            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            activation="softmax",
+        )(x)
+        model = tf.keras.models.Model(inputs=inputs, outputs=x)
+        model.compile(
+            optimizer="adam", loss="categorical_crossentropy", metrics=["acc"]
+        )
+        return model
+
+    def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
+        del mode
+        return "adam"
+
+    def create_loss(self, model: tf.keras.models.Model) -> tuple:
+        loss = "categorical_crossentropy"
+        metrics = ["acc"]
+        return loss, metrics
 
 
 class MyDataLoader(tk.data.DataLoader):

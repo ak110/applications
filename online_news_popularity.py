@@ -35,13 +35,13 @@ logger = tk.log.get(__name__)
 
 @app.command(logfile=False)
 def check():
-    create_pipeline().check()
+    create_model().check()
 
 
 @app.command(use_horovod=True)
 def train():
     train_set, val_set = load_data()
-    model = create_pipeline()
+    model = create_model()
     evals = model.train(train_set, val_set)
     pred = model.predict(val_set)[0]
     if tk.hvd.is_master():
@@ -52,7 +52,7 @@ def train():
 @app.command(use_horovod=True)
 def validate(model=None):
     _, val_set = load_data()
-    model = create_pipeline().load(models_dir)
+    model = create_model().load(models_dir)
     pred = model.predict(val_set)[0]
     if tk.hvd.is_master():
         tk.evaluations.print_regression_metrics(val_set.labels, pred)
@@ -77,9 +77,8 @@ def load_data():
     return tk.data.Dataset(X_train, y_train), tk.data.Dataset(X_test, y_test)
 
 
-def create_pipeline():
-    return tk.pipeline.KerasModel(
-        create_model_fn=create_model,
+def create_model():
+    return MyModel(
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
         fit_params={
@@ -93,47 +92,56 @@ def create_pipeline():
     )
 
 
-def create_model(bias=0):
-    dense = functools.partial(
-        tf.keras.layers.Dense,
-        use_bias=False,
-        kernel_initializer="he_uniform",
-        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-    )
-    bn = functools.partial(
-        tf.keras.layers.BatchNormalization,
-        gamma_regularizer=tf.keras.regularizers.l2(1e-5),
-    )
-    act = functools.partial(tf.keras.layers.Activation, activation="elu")
+class MyModel(tk.pipeline.KerasModel):
+    """KerasModel"""
 
-    inputs = x = tf.keras.layers.Input(input_shape)
-    x = dense(512)(x)
-    for _ in range(3):
-        sc = x
-        x = bn()(x)
-        x = act()(x)
-        x = tf.keras.layers.Dropout(0.5)(x)
+    def create_network(self) -> tf.keras.models.Model:
+        dense = functools.partial(
+            tf.keras.layers.Dense,
+            use_bias=False,
+            kernel_initializer="he_uniform",
+            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        )
+        bn = functools.partial(
+            tf.keras.layers.BatchNormalization,
+            gamma_regularizer=tf.keras.regularizers.l2(1e-5),
+        )
+        act = functools.partial(tf.keras.layers.Activation, activation="elu")
+
+        inputs = x = tf.keras.layers.Input(input_shape)
         x = dense(512)(x)
+        for _ in range(3):
+            sc = x
+            x = bn()(x)
+            x = act()(x)
+            x = tf.keras.layers.Dropout(0.5)(x)
+            x = dense(512)(x)
+            x = bn()(x)
+            x = act()(x)
+            x = tf.keras.layers.Dropout(0.5)(x)
+            x = dense(512, kernel_initializer="zeros")(x)
+            x = tf.keras.layers.add([sc, x])
         x = bn()(x)
         x = act()(x)
         x = tf.keras.layers.Dropout(0.5)(x)
-        x = dense(512, kernel_initializer="zeros")(x)
-        x = tf.keras.layers.add([sc, x])
-    x = bn()(x)
-    x = act()(x)
-    x = tf.keras.layers.Dropout(0.5)(x)
-    x = tf.keras.layers.Dense(
-        1,
-        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-        bias_initializer=tf.keras.initializers.constant(bias),
-    )(x)
-    model = tf.keras.models.Model(inputs=inputs, outputs=x)
-    base_lr = 3e-4 * batch_size * tk.hvd.size()
-    optimizer = tf.keras.optimizers.SGD(
-        lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
-    )
-    tk.models.compile(model, optimizer, "mse", ["mae"])
-    return model
+        x = tf.keras.layers.Dense(1, kernel_regularizer=tf.keras.regularizers.l2(1e-4))(
+            x
+        )
+        model = tf.keras.models.Model(inputs=inputs, outputs=x)
+        return model
+
+    def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
+        del mode
+        base_lr = 3e-4 * batch_size * tk.hvd.size()
+        optimizer = tf.keras.optimizers.SGD(
+            lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
+        )
+        return optimizer
+
+    def create_loss(self, model: tf.keras.models.Model) -> tuple:
+        loss = "mse"
+        metrics = ["mae"]
+        return loss, metrics
 
 
 class MyDataLoader(tk.data.DataLoader):

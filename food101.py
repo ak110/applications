@@ -19,7 +19,7 @@ logger = tk.log.get(__name__)
 
 @app.command(logfile=False)
 def check():
-    model = create_pipeline().check()
+    model = create_model().check()
     train_set, val_set = load_data()
     model.models = [model.create_model_fn()]
     model.evaluate(train_set)
@@ -55,7 +55,7 @@ def train():
         print("val_acc:", estimator.score(feats_val, val_set.labels))
     tk.hvd.barrier()
 
-    model = create_pipeline()
+    model = create_model()
     evals = model.train(train_set, val_set)
     tk.notifications.post_evals(evals)
 
@@ -63,7 +63,7 @@ def train():
 @app.command(use_horovod=True)
 def validate():
     _, val_set = load_data()
-    model = create_pipeline().load(models_dir)
+    model = create_model().load(models_dir)
     pred = model.predict(val_set)[0]
     if tk.hvd.is_master():
         tk.evaluations.print_classification_metrics(val_set.labels, pred)
@@ -73,9 +73,8 @@ def load_data():
     return tk.datasets.load_trainval_folders(data_dir, swap=True)
 
 
-def create_pipeline():
-    return tk.pipeline.KerasModel(
-        create_model_fn=create_model,
+def create_model():
+    return MyModel(
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
         fit_params={"epochs": 30, "callbacks": [tk.callbacks.CosineAnnealing()]},
@@ -85,35 +84,44 @@ def create_pipeline():
     )
 
 
-def create_model():
-    inputs = x = tf.keras.layers.Input((None, None, 3))
-    backbone = tk.applications.xception.xception(input_tensor=x)
-    x = backbone.output
-    x = tk.layers.GeM2D()(x)
-    x = tf.keras.layers.Dense(
-        num_classes,
-        kernel_initializer="zeros",
-        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-        name="logits",
-    )(x)
-    x = tf.keras.layers.Activation(activation="softmax")(x)
-    model = tf.keras.models.Model(inputs=inputs, outputs=x)
-    base_lr = 1e-3 * batch_size * tk.hvd.size()
-    optimizer = tf.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
+class MyModel(tk.pipeline.KerasModel):
+    """KerasModel"""
 
-    def loss(y_true, y_pred):
-        del y_pred
-        logits = model.get_layer("logits").output
-        return tk.losses.categorical_crossentropy(
-            y_true, logits, from_logits=True, label_smoothing=0.2
-        )
+    def create_network(self) -> tf.keras.models.Model:
+        inputs = x = tf.keras.layers.Input((None, None, 3))
+        backbone = tk.applications.xception.xception(input_tensor=x)
+        x = backbone.output
+        x = tk.layers.GeM2D()(x)
+        x = tf.keras.layers.Dense(
+            num_classes,
+            kernel_initializer="zeros",
+            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            name="logits",
+        )(x)
+        x = tf.keras.layers.Activation(activation="softmax")(x)
+        model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    tk.models.compile(model, optimizer, loss, ["acc"])
+        coef, intercept = tk.utils.load(models_dir / "linear.pkl")
+        model.get_layer("logits").set_weights([coef.T, intercept])
 
-    coef, intercept = tk.utils.load(models_dir / "linear.pkl")
-    model.get_layer("logits").set_weights([coef.T, intercept])
+        return model
 
-    return model
+    def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
+        del mode
+        base_lr = 1e-3 * batch_size * tk.hvd.size()
+        optimizer = tf.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
+        return optimizer
+
+    def create_loss(self, model: tf.keras.models.Model) -> tuple:
+        def loss(y_true, y_pred):
+            del y_pred
+            logits = model.get_layer("logits").output
+            return tk.losses.categorical_crossentropy(
+                y_true, logits, from_logits=True, label_smoothing=0.2
+            )
+
+        metrics = ["acc"]
+        return loss, metrics
 
 
 class MyDataLoader(tk.data.DataLoader):
