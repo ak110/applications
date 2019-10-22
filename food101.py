@@ -101,7 +101,7 @@ class MyModel(tk.pipeline.KerasModel):
         x = tf.keras.layers.Dense(
             num_classes,
             kernel_initializer="zeros",
-            # kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
             name="logits",
         )(x)
         x = tf.keras.layers.Activation(activation="softmax")(x)

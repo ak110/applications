@@ -76,7 +76,14 @@ class MyModel(tk.pipeline.KerasModel):
     def create_network(self) -> tf.keras.models.Model:
         K = tf.keras.backend
 
-        conv2d = functools.partial(tk.layers.WSConv2D, kernel_size=3)
+        conv2d = functools.partial(
+            tk.layers.WSConv2D,
+            kernel_size=3,
+            padding="same",
+            use_bias=False,
+            kernel_initializer="he_uniform",
+            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        )
         bn = functools.partial(
             tk.layers.GroupNormalization,
             gamma_regularizer=tf.keras.regularizers.l2(1e-4),
