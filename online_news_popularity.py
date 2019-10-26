@@ -81,11 +81,9 @@ def create_model():
     return MyModel(
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
-        fit_params={
-            "epochs": 100,
-            "callbacks": [tk.callbacks.CosineAnnealing()],
-            "workers": 8,
-        },
+        epochs=100,
+        callbacks=[tk.callbacks.CosineAnnealing()],
+        fit_params={"workers": 8},
         models_dir=models_dir,
         model_name_format="model.h5",
         skip_if_exists=False,
