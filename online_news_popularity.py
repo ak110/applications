@@ -133,7 +133,7 @@ class MyModel(tk.pipeline.KerasModel):
         del mode
         base_lr = 3e-4 * batch_size * tk.hvd.size()
         optimizer = tf.keras.optimizers.SGD(
-            lr=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
+            learning_rate=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
         )
         return optimizer
 

@@ -120,7 +120,9 @@ class MyModel(tk.pipeline.KerasModel):
     def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
         del mode
         base_lr = 1e-3 * batch_size * tk.hvd.size()
-        optimizer = tf.keras.optimizers.SGD(lr=base_lr, momentum=0.9, nesterov=True)
+        optimizer = tf.keras.optimizers.SGD(
+            learning_rate=base_lr, momentum=0.9, nesterov=True
+        )
         return optimizer
 
     def create_loss(self, model: tf.keras.models.Model) -> tuple:

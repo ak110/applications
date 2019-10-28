@@ -10,7 +10,6 @@ import pathlib
 
 import albumentations as A
 import tensorflow as tf
-import tensorflow_addons as tfa
 
 import pytoolkit as tk
 
@@ -75,11 +74,11 @@ class MyModel(tk.pipeline.KerasModel):
             padding="same",
             use_bias=False,
             kernel_initializer="he_uniform",
-            # kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
         )
         bn = functools.partial(
             tf.keras.layers.BatchNormalization,
-            # gamma_regularizer=tf.keras.regularizers.l2(1e-4),
+            gamma_regularizer=tf.keras.regularizers.l2(1e-4),
         )
         act = functools.partial(tf.keras.layers.Activation, "relu")
 
@@ -145,7 +144,7 @@ class MyModel(tk.pipeline.KerasModel):
         x = tf.keras.layers.Dense(
             num_classes,
             kernel_initializer="zeros",
-            # kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
             name="logits",
         )(x)
         x = tf.keras.layers.Activation(activation="softmax")(x)
@@ -155,8 +154,8 @@ class MyModel(tk.pipeline.KerasModel):
     def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
         del mode
         base_lr = 1e-3 * batch_size * tk.hvd.size()
-        optimizer = tfa.optimizers.SGDW(
-            lr=base_lr, weight_decay=1e-4, momentum=0.9, nesterov=True
+        optimizer = tf.keras.optimizers.SGD(
+            learning_rate=base_lr, momentum=0.9, nesterov=True
         )
         return optimizer
 
