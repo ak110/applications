@@ -58,7 +58,9 @@ def load_data():
 
 
 def create_model():
-    return MyModel(
+    return tk.pipeline.KerasModel(
+        create_network_fn=create_network,
+        nfold=1,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
         epochs=300,
@@ -71,133 +73,126 @@ def create_model():
     )
 
 
-class MyModel(tk.pipeline.KerasModel):
-    """KerasModel"""
+def create_network() -> tf.keras.models.Model:
+    K = tf.keras.backend
 
-    def create_network(self) -> tf.keras.models.Model:
-        K = tf.keras.backend
+    conv2d = functools.partial(
+        tk.layers.WSConv2D,
+        kernel_size=3,
+        padding="same",
+        use_bias=False,
+        kernel_initializer="he_uniform",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+    )
+    bn = functools.partial(
+        tk.layers.GroupNormalization, gamma_regularizer=tf.keras.regularizers.l2(1e-4),
+    )
+    act = functools.partial(tf.keras.layers.Activation, "relu")
 
-        conv2d = functools.partial(
-            tk.layers.WSConv2D,
-            kernel_size=3,
-            padding="same",
-            use_bias=False,
-            kernel_initializer="he_uniform",
-            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-        )
-        bn = functools.partial(
-            tk.layers.GroupNormalization,
-            gamma_regularizer=tf.keras.regularizers.l2(1e-4),
-        )
-        act = functools.partial(tf.keras.layers.Activation, "relu")
+    def down(filters):
+        def layers(x):
+            in_filters = K.int_shape(x)[-1]
+            g = conv2d(in_filters // 8)(x)
+            g = bn()(g)
+            g = act()(g)
+            g = tf.keras.layers.Conv2D(
+                in_filters,
+                3,
+                padding="same",
+                kernel_initializer="he_uniform",
+                kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+                use_bias=True,
+                activation="sigmoid",
+            )(g)
+            x = tf.keras.layers.multiply([x, g])
+            x = tf.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
+            x = tk.layers.BlurPooling2D(taps=4)(x)
+            x = conv2d(filters)(x)
+            x = bn()(x)
+            return x
 
-        def down(filters):
-            def layers(x):
-                in_filters = K.int_shape(x)[-1]
-                g = conv2d(in_filters // 8)(x)
-                g = bn()(g)
-                g = act()(g)
-                g = tf.keras.layers.Conv2D(
-                    in_filters,
-                    3,
-                    padding="same",
-                    kernel_initializer="he_uniform",
-                    kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-                    use_bias=True,
-                    activation="sigmoid",
-                )(g)
-                x = tf.keras.layers.multiply([x, g])
-                x = tf.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
-                x = tk.layers.BlurPooling2D(taps=4)(x)
+        return layers
+
+    def blocks(filters, count):
+        def layers(x):
+            for _ in range(count):
+                sc = x
                 x = conv2d(filters)(x)
                 x = bn()(x)
-                return x
-
-            return layers
-
-        def blocks(filters, count):
-            def layers(x):
-                for _ in range(count):
-                    sc = x
-                    x = conv2d(filters)(x)
-                    x = bn()(x)
-                    x = act()(x)
-                    x = conv2d(filters)(x)
-                    # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
-                    x = bn(gamma_initializer="zeros")(x)
-                    x = tf.keras.layers.add([sc, x])
-                x = bn()(x)
                 x = act()(x)
-                return x
+                x = conv2d(filters)(x)
+                # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
+                x = bn(gamma_initializer="zeros")(x)
+                x = tf.keras.layers.add([sc, x])
+            x = bn()(x)
+            x = act()(x)
+            return x
 
-            return layers
+        return layers
 
-        inputs = x = tf.keras.layers.Input(input_shape)
-        x = tf.keras.layers.concatenate(
-            [
-                conv2d(16, kernel_size=2, strides=2)(x),
-                conv2d(16, kernel_size=4, strides=2)(x),
-                conv2d(16, kernel_size=6, strides=2)(x),
-                conv2d(16, kernel_size=8, strides=2)(x),
-            ]
-        )  # 1/2
-        x = bn()(x)
-        x = act()(x)
-        x = conv2d(128, kernel_size=2, strides=2)(x)  # 1/4
-        x = bn()(x)
-        x = blocks(128, 2)(x)
-        d = x
-        x = down(256)(x)  # 1/8
-        x = blocks(256, 4)(x)
-        x = down(512)(x)  # 1/16
-        x = blocks(512, 4)(x)
-        x = down(512)(x)  # 1/32
-        x = blocks(512, 4)(x)
-        x = conv2d(128 * 8 * 8, kernel_size=1)(x)
-        x = bn()(x)
-        x = act()(x)
-        x = tk.layers.SubpixelConv2D(scale=8)(x)  # 1/4
-        x = conv2d(128)(x)
-        x = bn()(x)
-        d = bn()(conv2d(128)(d))
-        x = tf.keras.layers.add([x, d])
-        x = blocks(128, 3)(x)
-        x = tf.keras.layers.Conv2D(
-            num_classes * 4 * 4,
-            kernel_size=1,
-            padding="same",
-            kernel_initializer="he_uniform",
-            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-            use_bias=True,
-            bias_initializer=tf.keras.initializers.constant(tk.math.logit(0.01)),
-        )(x)
-        x = tk.layers.SubpixelConv2D(scale=4, name="logits")(x)  # 1/1
-        x = tf.keras.layers.Activation(activation="softmax")(x)
-        model = tf.keras.models.Model(inputs=inputs, outputs=x)
-        return model
+    inputs = x = tf.keras.layers.Input(input_shape)
+    x = tf.keras.layers.concatenate(
+        [
+            conv2d(16, kernel_size=2, strides=2)(x),
+            conv2d(16, kernel_size=4, strides=2)(x),
+            conv2d(16, kernel_size=6, strides=2)(x),
+            conv2d(16, kernel_size=8, strides=2)(x),
+        ]
+    )  # 1/2
+    x = bn()(x)
+    x = act()(x)
+    x = conv2d(128, kernel_size=2, strides=2)(x)  # 1/4
+    x = bn()(x)
+    x = blocks(128, 2)(x)
+    d = x
+    x = down(256)(x)  # 1/8
+    x = blocks(256, 4)(x)
+    x = down(512)(x)  # 1/16
+    x = blocks(512, 4)(x)
+    x = down(512)(x)  # 1/32
+    x = blocks(512, 4)(x)
+    x = conv2d(128 * 8 * 8, kernel_size=1)(x)
+    x = bn()(x)
+    x = act()(x)
+    x = tk.layers.SubpixelConv2D(scale=8)(x)  # 1/4
+    x = conv2d(128)(x)
+    x = bn()(x)
+    d = bn()(conv2d(128)(d))
+    x = tf.keras.layers.add([x, d])
+    x = blocks(128, 3)(x)
+    x = tf.keras.layers.Conv2D(
+        num_classes * 4 * 4,
+        kernel_size=1,
+        padding="same",
+        kernel_initializer="he_uniform",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        use_bias=True,
+        bias_initializer=tf.keras.initializers.constant(tk.math.logit(0.01)),
+    )(x)
+    x = tk.layers.SubpixelConv2D(scale=4, name="logits")(x)  # 1/1
+    x = tf.keras.layers.Activation(activation="softmax")(x)
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
-        del mode
-        base_lr = 1e-3 * batch_size * tk.hvd.size()
-        optimizer = tf.keras.optimizers.SGD(
-            learning_rate=base_lr, momentum=0.9, nesterov=True
-        )
-        return optimizer
+    base_lr = 1e-3 * batch_size * tk.hvd.size()
+    optimizer = tf.keras.optimizers.SGD(
+        learning_rate=base_lr, momentum=0.9, nesterov=True
+    )
 
-    def create_loss(self, model: tf.keras.models.Model) -> tuple:
-        def loss(y_true, y_pred):
-            del y_pred
-            logits = model.get_layer("logits").output
-            losses = [
-                tk.losses.lovasz_hinge(
-                    y_true[:, :, :, i], logits[:, :, :, i], from_logits=True
-                )
-                for i in range(num_classes)
-            ]
-            return tf.reduce_mean(losses, axis=0)
+    def loss(y_true, y_pred):
+        del y_pred
+        logits = model.get_layer("logits").output
+        losses = [
+            tk.losses.lovasz_hinge(
+                y_true[:, :, :, i], logits[:, :, :, i], from_logits=True
+            )
+            for i in range(num_classes)
+        ]
+        return tf.reduce_mean(losses, axis=0)
 
-        metrics = [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
-        return loss, metrics
+    tk.models.compile(
+        model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
+    )
+    return model
 
 
 class MyDataLoader(tk.data.DataLoader):

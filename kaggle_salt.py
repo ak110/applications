@@ -106,7 +106,9 @@ def _load_image(X):
 
 
 def create_model():
-    return MyModel(
+    return tk.pipeline.KerasModel(
+        create_network_fn=create_network,
+        nfold=1,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
         epochs=300,
@@ -119,95 +121,89 @@ def create_model():
     )
 
 
-class MyModel(tk.pipeline.KerasModel):
-    """KerasModel"""
+def create_network() -> tf.keras.models.Model:
+    conv2d = functools.partial(
+        tf.keras.layers.Conv2D,
+        kernel_size=3,
+        padding="same",
+        use_bias=False,
+        kernel_initializer="he_uniform",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+    )
+    bn = functools.partial(
+        tf.keras.layers.BatchNormalization,
+        gamma_regularizer=tf.keras.regularizers.l2(1e-4),
+    )
+    act = functools.partial(tf.keras.layers.Activation, "relu")
 
-    def create_network(self) -> tf.keras.models.Model:
-        conv2d = functools.partial(
-            tf.keras.layers.Conv2D,
-            kernel_size=3,
-            padding="same",
-            use_bias=False,
-            kernel_initializer="he_uniform",
-            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-        )
-        bn = functools.partial(
-            tf.keras.layers.BatchNormalization,
-            gamma_regularizer=tf.keras.regularizers.l2(1e-4),
-        )
-        act = functools.partial(tf.keras.layers.Activation, "relu")
-
-        def blocks(filters, count):
-            def layers(x):
-                for _ in range(count):
-                    sc = x
-                    x = conv2d(filters)(x)
-                    x = bn()(x)
-                    x = act()(x)
-                    x = conv2d(filters)(x)
-                    # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
-                    x = bn(gamma_initializer="zeros")(x)
-                    x = tf.keras.layers.add([sc, x])
+    def blocks(filters, count):
+        def layers(x):
+            for _ in range(count):
+                sc = x
+                x = conv2d(filters)(x)
                 x = bn()(x)
                 x = act()(x)
-                return x
+                x = conv2d(filters)(x)
+                # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
+                x = bn(gamma_initializer="zeros")(x)
+                x = tf.keras.layers.add([sc, x])
+            x = bn()(x)
+            x = act()(x)
+            return x
 
-            return layers
+        return layers
 
-        inputs = x = tf.keras.layers.Input(input_shape)
-        x = tk.layers.Pad2D(((5, 6), (5, 6)), mode="reflect")(x)  # 112
-        x = tf.keras.layers.concatenate([x, x, x])
-        backbone = tk.applications.darknet53.darknet53(input_tensor=x, for_small=True)
-        x = backbone.output
-        x = tk.layers.ScaleGradient(scale=0.1)(x)
-        x = conv2d(256)(x)
-        x = bn()(x)
-        x = act()(x)
-        x = conv2d(256 * 4 * 4, kernel_size=1)(x)
-        x = bn()(x)
-        x = act()(x)
-        x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/4
-        x = tk.layers.CoordChannel2D(x_channel=False)(x)
-        x = conv2d(256)(x)
-        x = bn()(x)
-        d = backbone.get_layer("block12_add").output  # 1/4
-        d = tk.layers.ScaleGradient(scale=0.1)(d)
-        d = conv2d(256)(d)
-        d = bn(center=False)(d)
-        x = tf.keras.layers.add([x, d])
-        d = backbone.get_layer("block2_add").output  # 1/1
-        d = tk.layers.ScaleGradient(scale=0.1)(d)
-        d = conv2d(256, kernel_size=4, strides=4)(d)
-        d = bn(center=False)(d)
-        x = tf.keras.layers.add([x, d])
-        x = blocks(256, 8)(x)
-        x = conv2d(
-            1 * 4 * 4,
-            use_bias=True,
-            bias_initializer=tf.keras.initializers.constant(tk.math.logit(0.01)),
-        )(x)
-        x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/1
-        x = tf.keras.layers.Cropping2D(((5, 6), (5, 6)), name="logits")(x)  # 101
-        x = tf.keras.layers.Activation("sigmoid")(x)
-        model = tf.keras.models.Model(inputs=inputs, outputs=x)
-        return model
+    inputs = x = tf.keras.layers.Input(input_shape)
+    x = tk.layers.Pad2D(((5, 6), (5, 6)), mode="reflect")(x)  # 112
+    x = tf.keras.layers.concatenate([x, x, x])
+    backbone = tk.applications.darknet53.darknet53(input_tensor=x, for_small=True)
+    x = backbone.output
+    x = tk.layers.ScaleGradient(scale=0.1)(x)
+    x = conv2d(256)(x)
+    x = bn()(x)
+    x = act()(x)
+    x = conv2d(256 * 4 * 4, kernel_size=1)(x)
+    x = bn()(x)
+    x = act()(x)
+    x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/4
+    x = tk.layers.CoordChannel2D(x_channel=False)(x)
+    x = conv2d(256)(x)
+    x = bn()(x)
+    d = backbone.get_layer("block12_add").output  # 1/4
+    d = tk.layers.ScaleGradient(scale=0.1)(d)
+    d = conv2d(256)(d)
+    d = bn(center=False)(d)
+    x = tf.keras.layers.add([x, d])
+    d = backbone.get_layer("block2_add").output  # 1/1
+    d = tk.layers.ScaleGradient(scale=0.1)(d)
+    d = conv2d(256, kernel_size=4, strides=4)(d)
+    d = bn(center=False)(d)
+    x = tf.keras.layers.add([x, d])
+    x = blocks(256, 8)(x)
+    x = conv2d(
+        1 * 4 * 4,
+        use_bias=True,
+        bias_initializer=tf.keras.initializers.constant(tk.math.logit(0.01)),
+    )(x)
+    x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/1
+    x = tf.keras.layers.Cropping2D(((5, 6), (5, 6)), name="logits")(x)  # 101
+    x = tf.keras.layers.Activation("sigmoid")(x)
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
-        del mode
-        base_lr = 1e-3 * batch_size * tk.hvd.size()
-        optimizer = tf.keras.optimizers.SGD(
-            learning_rate=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
-        )
-        return optimizer
+    base_lr = 1e-3 * batch_size * tk.hvd.size()
+    optimizer = tf.keras.optimizers.SGD(
+        learning_rate=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
+    )
 
-    def create_loss(self, model: tf.keras.models.Model) -> tuple:
-        def loss(y_true, y_pred):
-            del y_pred
-            logits = model.get_layer("logits").output
-            return tk.losses.lovasz_hinge(y_true, logits, from_logits=True)
+    def loss(y_true, y_pred):
+        del y_pred
+        logits = model.get_layer("logits").output
+        return tk.losses.lovasz_hinge(y_true, logits, from_logits=True)
 
-        metrics = [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
-        return loss, metrics
+    tk.models.compile(
+        model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
+    )
+    return model
 
 
 class MyDataLoader(tk.data.DataLoader):

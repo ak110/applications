@@ -78,7 +78,9 @@ def load_data():
 
 
 def create_model():
-    return MyModel(
+    return tk.pipeline.KerasModel(
+        create_network_fn=create_network,
+        nfold=1,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
         epochs=100,
@@ -91,56 +93,45 @@ def create_model():
     )
 
 
-class MyModel(tk.pipeline.KerasModel):
-    """KerasModel"""
+def create_network() -> tf.keras.models.Model:
+    dense = functools.partial(
+        tf.keras.layers.Dense,
+        use_bias=False,
+        kernel_initializer="he_uniform",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+    )
+    bn = functools.partial(
+        tf.keras.layers.BatchNormalization,
+        gamma_regularizer=tf.keras.regularizers.l2(1e-5),
+    )
+    act = functools.partial(tf.keras.layers.Activation, activation="elu")
 
-    def create_network(self) -> tf.keras.models.Model:
-        dense = functools.partial(
-            tf.keras.layers.Dense,
-            use_bias=False,
-            kernel_initializer="he_uniform",
-            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-        )
-        bn = functools.partial(
-            tf.keras.layers.BatchNormalization,
-            gamma_regularizer=tf.keras.regularizers.l2(1e-5),
-        )
-        act = functools.partial(tf.keras.layers.Activation, activation="elu")
-
-        inputs = x = tf.keras.layers.Input(input_shape)
-        x = dense(512)(x)
-        for _ in range(3):
-            sc = x
-            x = bn()(x)
-            x = act()(x)
-            x = tf.keras.layers.Dropout(0.5)(x)
-            x = dense(512)(x)
-            x = bn()(x)
-            x = act()(x)
-            x = tf.keras.layers.Dropout(0.5)(x)
-            x = dense(512, kernel_initializer="zeros")(x)
-            x = tf.keras.layers.add([sc, x])
+    inputs = x = tf.keras.layers.Input(input_shape)
+    x = dense(512)(x)
+    for _ in range(3):
+        sc = x
         x = bn()(x)
         x = act()(x)
         x = tf.keras.layers.Dropout(0.5)(x)
-        x = tf.keras.layers.Dense(1, kernel_regularizer=tf.keras.regularizers.l2(1e-4))(
-            x
-        )
-        model = tf.keras.models.Model(inputs=inputs, outputs=x)
-        return model
+        x = dense(512)(x)
+        x = bn()(x)
+        x = act()(x)
+        x = tf.keras.layers.Dropout(0.5)(x)
+        x = dense(512, kernel_initializer="zeros")(x)
+        x = tf.keras.layers.add([sc, x])
+    x = bn()(x)
+    x = act()(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    x = tf.keras.layers.Dense(1, kernel_regularizer=tf.keras.regularizers.l2(1e-4))(x)
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
-        del mode
-        base_lr = 3e-4 * batch_size * tk.hvd.size()
-        optimizer = tf.keras.optimizers.SGD(
-            learning_rate=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
-        )
-        return optimizer
+    base_lr = 3e-4 * batch_size * tk.hvd.size()
+    optimizer = tf.keras.optimizers.SGD(
+        learning_rate=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
+    )
 
-    def create_loss(self, model: tf.keras.models.Model) -> tuple:
-        loss = "mse"
-        metrics = ["mae"]
-        return loss, metrics
+    tk.models.compile(model, optimizer, "mse", ["mae"])
+    return model
 
 
 class MyDataLoader(tk.data.DataLoader):

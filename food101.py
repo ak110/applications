@@ -26,7 +26,7 @@ logger = tk.log.get(__name__)
 def check():
     model = create_model().check()
     train_set, val_set = load_data()
-    model.models = [model.create_model_fn()]
+    model.models[0] = model.create_network_fn()
     model.evaluate(train_set)
     model.evaluate(val_set, prefix="val_")
 
@@ -79,7 +79,9 @@ def load_data():
 
 
 def create_model():
-    return MyModel(
+    return tk.pipeline.KerasModel(
+        create_network_fn=create_network,
+        nfold=1,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
         epochs=30,
@@ -91,46 +93,37 @@ def create_model():
     )
 
 
-class MyModel(tk.pipeline.KerasModel):
-    """KerasModel"""
+def create_network() -> tf.keras.models.Model:
+    inputs = x = tf.keras.layers.Input((None, None, 3))
+    backbone = tk.applications.xception.xception(input_tensor=x)
+    x = backbone.output
+    x = tk.layers.GeM2D()(x)
+    x = tf.keras.layers.Dense(
+        num_classes,
+        kernel_initializer="zeros",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        name="logits",
+    )(x)
+    x = tf.keras.layers.Activation(activation="softmax")(x)
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    def create_network(self) -> tf.keras.models.Model:
-        inputs = x = tf.keras.layers.Input((None, None, 3))
-        backbone = tk.applications.xception.xception(input_tensor=x)
-        x = backbone.output
-        x = tk.layers.GeM2D()(x)
-        x = tf.keras.layers.Dense(
-            num_classes,
-            kernel_initializer="zeros",
-            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-            name="logits",
-        )(x)
-        x = tf.keras.layers.Activation(activation="softmax")(x)
-        model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    coef, intercept = tk.utils.load(models_dir / "linear.pkl")
+    model.get_layer("logits").set_weights([coef.T, intercept])
 
-        coef, intercept = tk.utils.load(models_dir / "linear.pkl")
-        model.get_layer("logits").set_weights([coef.T, intercept])
+    base_lr = 1e-3 * batch_size * tk.hvd.size()
+    optimizer = tf.keras.optimizers.SGD(
+        learning_rate=base_lr, momentum=0.9, nesterov=True
+    )
 
-        return model
-
-    def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
-        del mode
-        base_lr = 1e-3 * batch_size * tk.hvd.size()
-        optimizer = tf.keras.optimizers.SGD(
-            learning_rate=base_lr, momentum=0.9, nesterov=True
+    def loss(y_true, y_pred):
+        del y_pred
+        logits = model.get_layer("logits").output
+        return tk.losses.categorical_crossentropy(
+            y_true, logits, from_logits=True, label_smoothing=0.2
         )
-        return optimizer
 
-    def create_loss(self, model: tf.keras.models.Model) -> tuple:
-        def loss(y_true, y_pred):
-            del y_pred
-            logits = model.get_layer("logits").output
-            return tk.losses.categorical_crossentropy(
-                y_true, logits, from_logits=True, label_smoothing=0.2
-            )
-
-        metrics = ["acc"]
-        return loss, metrics
+    tk.models.compile(model, optimizer, loss, ["acc"])
+    return model
 
 
 class MyDataLoader(tk.data.DataLoader):

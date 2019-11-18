@@ -87,7 +87,9 @@ def load_data():
 
 
 def create_model():
-    return MyModel(
+    return tk.pipeline.KerasModel(
+        create_network_fn=create_network,
+        nfold=1,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
         epochs=20,
@@ -100,34 +102,20 @@ def create_model():
     )
 
 
-class MyModel(tk.pipeline.KerasModel):
-    """KerasModel"""
-
-    def create_network(self) -> tf.keras.models.Model:
-        inputs = x = tf.keras.layers.Input(input_shape)
-        x = tf.keras.layers.Embedding(65536, 256, mask_zero=True)(x)
-        x1 = tf.keras.layers.GlobalAveragePooling1D()(x)
-        x2 = tf.keras.layers.GlobalMaxPooling1D()(tk.layers.RemoveMask()(x))
-        x = tf.keras.layers.concatenate([x1, x2])
-        x = tf.keras.layers.Dense(
-            num_classes,
-            kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-            activation="softmax",
-        )(x)
-        model = tf.keras.models.Model(inputs=inputs, outputs=x)
-        model.compile(
-            optimizer="adam", loss="categorical_crossentropy", metrics=["acc"]
-        )
-        return model
-
-    def create_optimizer(self, mode: str) -> tk.models.OptimizerType:
-        del mode
-        return "adam"
-
-    def create_loss(self, model: tf.keras.models.Model) -> tuple:
-        loss = "categorical_crossentropy"
-        metrics = ["acc"]
-        return loss, metrics
+def create_network() -> tf.keras.models.Model:
+    inputs = x = tf.keras.layers.Input(input_shape)
+    x = tf.keras.layers.Embedding(65536, 256, mask_zero=True)(x)
+    x1 = tf.keras.layers.GlobalAveragePooling1D()(x)
+    x2 = tf.keras.layers.GlobalMaxPooling1D()(tk.layers.RemoveMask()(x))
+    x = tf.keras.layers.concatenate([x1, x2])
+    x = tf.keras.layers.Dense(
+        num_classes,
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        activation="softmax",
+    )(x)
+    model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    tk.models.compile(model, "adam", "categorical_crossentropy", ["acc"])
+    return model
 
 
 class MyDataLoader(tk.data.DataLoader):
