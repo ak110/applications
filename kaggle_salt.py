@@ -61,7 +61,7 @@ def predict():
 
 
 def _evaluate(model, val_set):
-    pred_val = model.predict(val_set)[0]
+    pred_val = tk.math.softmax(model.predict(val_set)[0])
     if tk.hvd.is_master():
         evals = tk.evaluations.print_ss_metrics(val_set.labels / 255, pred_val, 0.5)
         tk.notifications.post_evals(evals)
@@ -71,7 +71,7 @@ def _evaluate(model, val_set):
 def _predict(model):
     test_set = load_test_data()
     test_set.labels = np.zeros_like(test_set.data)  # エラー除けのダミー
-    pred_test = model.predict(test_set)[0]
+    pred_test = tk.math.softmax(model.predict(test_set)[0])
 
     if tk.hvd.is_master():
         df = pd.DataFrame()
@@ -187,7 +187,6 @@ def create_network() -> tf.keras.models.Model:
     )(x)
     x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/1
     x = tf.keras.layers.Cropping2D(((5, 6), (5, 6)), name="logits")(x)  # 101
-    x = tf.keras.layers.Activation("sigmoid")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
     base_lr = 1e-3 * batch_size * tk.hvd.size()
@@ -195,9 +194,8 @@ def create_network() -> tf.keras.models.Model:
         learning_rate=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
     )
 
-    def loss(y_true, y_pred):
-        del y_pred
-        logits = model.get_layer("logits").output
+    @tf.function
+    def loss(y_true, logits):
         return tk.losses.lovasz_hinge(y_true, logits, from_logits=True)
 
     tk.models.compile(
