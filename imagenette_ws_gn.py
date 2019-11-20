@@ -82,32 +82,27 @@ def create_network() -> tf.keras.models.Model:
     )
     act = functools.partial(tf.keras.layers.Activation, "relu")
 
-    def down(filters):
+    def blocks(filters, count, down=True):
         def layers(x):
-            in_filters = K.int_shape(x)[-1]
-            g = conv2d(in_filters // 8)(x)
-            g = bn()(g)
-            g = act()(g)
-            g = tf.keras.layers.Conv2D(
-                in_filters,
-                3,
-                padding="same",
-                kernel_initializer="he_uniform",
-                kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-                use_bias=True,
-                activation="sigmoid",
-            )(g)
-            x = tf.keras.layers.multiply([x, g])
-            x = tf.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
-            x = tk.layers.BlurPooling2D(taps=4)(x)
-            x = conv2d(filters)(x)
-            x = bn()(x)
-            return x
-
-        return layers
-
-    def blocks(filters, count):
-        def layers(x):
+            if down:
+                in_filters = K.int_shape(x)[-1]
+                g = conv2d(in_filters // 8)(x)
+                g = bn()(g)
+                g = act()(g)
+                g = tf.keras.layers.Conv2D(
+                    in_filters,
+                    3,
+                    padding="same",
+                    kernel_initializer="he_uniform",
+                    kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+                    use_bias=True,
+                    activation="sigmoid",
+                )(g)
+                x = tf.keras.layers.multiply([x, g])
+                x = tf.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
+                x = tk.layers.BlurPooling2D(taps=4)(x)
+                x = conv2d(filters)(x)
+                x = bn()(x)
             for _ in range(count):
                 sc = x
                 x = conv2d(filters)(x)
@@ -129,13 +124,10 @@ def create_network() -> tf.keras.models.Model:
     x = act()(x)
     x = conv2d(128, kernel_size=4, strides=2)(x)  # 1/4
     x = bn()(x)
-    x = blocks(128, 2)(x)
-    x = down(256)(x)  # 1/8
-    x = blocks(256, 4)(x)
-    x = down(512)(x)  # 1/16
-    x = blocks(512, 4)(x)
-    x = down(512)(x)  # 1/32
-    x = blocks(512, 4)(x)
+    x = blocks(128, 2, down=False)(x)
+    x = blocks(256, 4)(x)  # 1/8
+    x = blocks(512, 4)(x)  # 1/16
+    x = blocks(512, 4)(x)  # 1/32
     x = tk.layers.GeM2D()(x)
     x = tf.keras.layers.Dense(
         num_classes,

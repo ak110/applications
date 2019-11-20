@@ -73,16 +73,11 @@ def create_network() -> tf.keras.models.Model:
     )
     act = functools.partial(tf.keras.layers.Activation, "relu")
 
-    def down(filters):
+    def blocks(filters, count, down=True):
         def layers(x):
-            x = conv2d(filters, kernel_size=4, strides=2)(x)
-            x = bn()(x)
-            return x
-
-        return layers
-
-    def blocks(filters, count):
-        def layers(x):
+            if down:
+                x = conv2d(filters, kernel_size=4, strides=2)(x)
+                x = bn()(x)
             for _ in range(count):
                 sc = x
                 x = conv2d(filters)(x)
@@ -101,10 +96,8 @@ def create_network() -> tf.keras.models.Model:
     inputs = x = tf.keras.layers.Input(input_shape)
     x = conv2d(128)(x)
     x = bn()(x)
-    x = blocks(128, 8)(x)
-    x = down(256)(x)
+    x = blocks(128, 8, down=False)(x)
     x = blocks(256, 8)(x)
-    x = down(512)(x)
     x = blocks(512, 8)(x)
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
     x = tf.keras.layers.Dense(
