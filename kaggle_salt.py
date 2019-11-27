@@ -155,14 +155,15 @@ def create_network() -> tf.keras.models.Model:
 
     inputs = x = tf.keras.layers.Input(input_shape)
     x = tk.layers.Pad2D(((5, 6), (5, 6)), mode="reflect")(x)  # 112
+    x = tf.keras.layers.UpSampling2D()(x)
     x = tf.keras.layers.concatenate([x, x, x])
-    backbone = tk.applications.darknet53.darknet53(input_tensor=x, for_small=True)
+    backbone = tk.applications.darknet53.darknet53(input_tensor=x)
     x = backbone.output
-    x = tk.layers.ScaleGradient(scale=0.1)(x)
+    # x = tk.layers.ScaleGradient(scale=0.1)(x)
     x = conv2d(256)(x)
     x = bn()(x)
     x = act()(x)
-    x = conv2d(256 * 4 * 4, kernel_size=1)(x)
+    x = conv2d(32 * 8 * 8, kernel_size=1)(x)
     x = bn()(x)
     x = act()(x)
     x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/4
@@ -170,12 +171,12 @@ def create_network() -> tf.keras.models.Model:
     x = conv2d(256)(x)
     x = bn()(x)
     d = backbone.get_layer("block12_add").output  # 1/4
-    d = tk.layers.ScaleGradient(scale=0.1)(d)
+    # d = tk.layers.ScaleGradient(scale=0.1)(d)
     d = conv2d(256)(d)
     d = bn(center=False)(d)
     x = tf.keras.layers.add([x, d])
     d = backbone.get_layer("block2_add").output  # 1/1
-    d = tk.layers.ScaleGradient(scale=0.1)(d)
+    # d = tk.layers.ScaleGradient(scale=0.1)(d)
     d = conv2d(256, kernel_size=4, strides=4)(d)
     d = bn(center=False)(d)
     x = tf.keras.layers.add([x, d])
@@ -191,8 +192,12 @@ def create_network() -> tf.keras.models.Model:
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
     base_lr = 1e-3 * batch_size * tk.hvd.size()
-    optimizer = tf.keras.optimizers.SGD(
-        learning_rate=base_lr, momentum=0.9, nesterov=True, clipnorm=10.0
+    optimizer = tk.optimizers.SGDEx(
+        learning_rate=base_lr,
+        momentum=0.9,
+        nesterov=True,
+        clipnorm=10.0,
+        lr_multipliers={backbone: 0.1},
     )
 
     @tf.function
