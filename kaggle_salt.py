@@ -200,9 +200,8 @@ def create_network() -> tf.keras.models.Model:
         lr_multipliers={backbone: 0.1},
     )
 
-    @tf.function
     def loss(y_true, y_pred):
-        return tk.losses.lovasz_hinge(y_true, y_pred, from_logits=False)
+        return tk.losses.lovasz_binary_crossentropy(y_true, y_pred)
 
     tk.models.compile(
         model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
@@ -214,7 +213,7 @@ class MyDataLoader(tk.data.DataLoader):
     """DataLoader"""
 
     def __init__(self, data_augmentation=False):
-        super().__init__(batch_size=batch_size, parallel=True)
+        super().__init__(batch_size=batch_size)
         self.data_augmentation = data_augmentation
         if self.data_augmentation:
             self.aug = A.Compose(

@@ -122,7 +122,7 @@ class MyDataLoader(tk.data.DataLoader):
     """DataLoader"""
 
     def __init__(self, data_augmentation=False):
-        super().__init__(batch_size=batch_size, parallel=False)
+        super().__init__(batch_size=batch_size)
         self.data_augmentation = data_augmentation
 
     def get_data(self, dataset: tk.data.Dataset, index: int):

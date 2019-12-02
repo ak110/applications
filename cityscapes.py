@@ -191,7 +191,7 @@ class MyDataLoader(tk.data.DataLoader):
     """DataLoader"""
 
     def __init__(self, data_augmentation=False):
-        super().__init__(batch_size=batch_size, parallel=True)
+        super().__init__(batch_size=batch_size)
         self.data_augmentation = data_augmentation
         if self.data_augmentation:
             self.aug = A.Compose(
