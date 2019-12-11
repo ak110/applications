@@ -201,7 +201,11 @@ def create_network() -> tf.keras.models.Model:
     )
 
     def loss(y_true, y_pred):
-        return tk.losses.lovasz_binary_crossentropy(y_true, y_pred)
+        # symmetric lovasz hinge
+        # https://www.kaggle.com/c/tgs-salt-identification-challenge/discussion/69053#latest-416168
+        loss1 = tk.losses.lovasz_hinge(y_true, y_pred)
+        loss2 = tk.losses.lovasz_hinge(1 - y_true, 1 - y_pred)
+        return (loss1 + loss2) / 2
 
     tk.models.compile(
         model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
