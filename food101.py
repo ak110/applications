@@ -26,7 +26,7 @@ logger = tk.log.get(__name__)
 def check():
     model = create_model().check()
     train_set, val_set = load_data()
-    model.models[0] = model.create_network_fn()
+    model.create_network(fold=0)
     model.evaluate(train_set)
     model.evaluate(val_set, prefix="val_")
 

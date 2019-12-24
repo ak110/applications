@@ -134,7 +134,7 @@ def create_network() -> tf.keras.models.Model:
     x = tk.layers.GeM2D()(x)
     x = tf.keras.layers.Dense(
         num_classes,
-        kernel_initializer="zeros",
+        use_bias=False,
         kernel_regularizer=tf.keras.regularizers.l2(1e-4),
         name="logits",
     )(x)
