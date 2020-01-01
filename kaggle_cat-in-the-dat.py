@@ -34,7 +34,7 @@ logger = tk.log.get(__name__)
 def train():
     train_set = load_train_data()
     folds = tk.validation.split(train_set, nfold, split_seed=1)
-    create_model().cv(train_set, folds, models_dir)
+    create_model().cv(train_set, folds)
     validate()
 
 
@@ -42,7 +42,8 @@ def train():
 def validate():
     train_set = load_train_data()
     folds = tk.validation.split(train_set, nfold, split_seed=1)
-    oofp = create_model().load(models_dir).predict_oof(train_set, folds)
+    model = create_model().load()
+    oofp = model.predict_oof(train_set, folds)
     tk.notifications.post_evals(
         {"auc": sklearn.metrics.roc_auc_score(train_set.labels, oofp)}
     )
@@ -53,7 +54,8 @@ def validate():
 def predict():
     # TODO: ValueError: Unknown values in column 'nom_8': {'2be51c868', '1f0a80e1d', 'ec337ce4c', 'a9bf3dc47'}
     test_set = load_test_data()
-    pred = create_model().load(models_dir).predict(test_set)
+    model = create_model().load()
+    pred = model.predict(test_set)
     df = pd.DataFrame()
     df["id"] = test_set.ids
     df["target"] = pred
@@ -101,7 +103,11 @@ def _preprocess(df):
 
 def create_model():
     return tk.pipeline.LGBModel(
-        params, nfold, seeds=seeds, preprocessors=[tk.preprocessing.FeaturesEncoder()]
+        params=params,
+        nfold=nfold,
+        models_dir=models_dir,
+        seeds=seeds,
+        preprocessors=[tk.preprocessing.FeaturesEncoder()],
     )
 
 

@@ -39,7 +39,7 @@ def train():
 @app.command(use_horovod=True)
 def validate(model=None):
     _, val_set = load_data()
-    model = create_model().load(models_dir)
+    model = create_model().load()
     pred = model.predict(val_set)[0]
     if tk.hvd.is_master():
         tk.evaluations.print_classification_metrics(val_set.labels, pred)

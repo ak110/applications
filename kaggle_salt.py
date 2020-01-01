@@ -49,14 +49,14 @@ def train():
 @app.command(use_horovod=True)
 def validate():
     _, val_set = load_data()
-    model = create_model().load(models_dir)
+    model = create_model().load()
     _evaluate(model, val_set)
     _predict(model)
 
 
 @app.command(use_horovod=True)
 def predict():
-    model = create_model().load(models_dir)
+    model = create_model().load()
     _predict(model)
 
 
