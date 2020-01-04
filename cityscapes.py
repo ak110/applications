@@ -74,8 +74,6 @@ def create_model():
 
 
 def create_network() -> tf.keras.models.Model:
-    K = tf.keras.backend
-
     conv2d = functools.partial(
         tk.layers.WSConv2D,
         kernel_size=3,
@@ -92,7 +90,7 @@ def create_network() -> tf.keras.models.Model:
     def blocks(filters, count, down=True):
         def layers(x):
             if down:
-                in_filters = K.int_shape(x)[-1]
+                in_filters = x.shape[-1]
                 g = conv2d(in_filters // 8)(x)
                 g = bn()(g)
                 g = act()(g)
