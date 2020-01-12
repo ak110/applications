@@ -43,7 +43,7 @@ def train():
     train_set, val_set = load_data()
     model = create_model()
     evals = model.train(train_set, val_set)
-    pred = model.predict(val_set)[0]
+    pred = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
         evals = tk.evaluations.print_regression_metrics(val_set.labels, pred)
         tk.notifications.post_evals(evals)
@@ -53,7 +53,7 @@ def train():
 def validate(model=None):
     _, val_set = load_data()
     model = create_model().load()
-    pred = model.predict(val_set)[0]
+    pred = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
         tk.evaluations.print_regression_metrics(val_set.labels, pred)
 

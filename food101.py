@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """転移学習の練習用コード。(Food-101)
 
+train: 25250 samples
+val: 75750 samples
+
+<https://arxiv.org/abs/1912.11370> を参考に調整。
+
 val_loss: 2.095
 val_acc:  0.798
 
@@ -34,32 +39,6 @@ def check():
 @app.command(use_horovod=True)
 def train():
     train_set, val_set = load_data()
-
-    inputs = x = tf.keras.layers.Input((None, None, 3))
-    backbone = tk.applications.xception.xception(input_tensor=x)
-    x = backbone.output
-    x = tk.layers.GeM2D()(x)
-    pretrain_model = tf.keras.models.Model(inputs, x)
-    feats_train = tk.models.predict(
-        pretrain_model, train_set, MyDataLoader(), use_horovod=True
-    )
-    feats_val = tk.models.predict(
-        pretrain_model, val_set, MyDataLoader(), use_horovod=True
-    )
-    if tk.hvd.is_master():
-        import sklearn.linear_model
-
-        estimator = sklearn.linear_model.LogisticRegression(
-            C=0.01, solver="lbfgs", multi_class="multinomial", n_jobs=-1
-        )
-        estimator.fit(feats_train, train_set.labels)
-        tk.utils.dump(
-            [estimator.coef_, estimator.intercept_], models_dir / "linear.pkl"
-        )
-        print("acc:    ", estimator.score(feats_train, train_set.labels))
-        print("val_acc:", estimator.score(feats_val, val_set.labels))
-    tk.hvd.barrier()
-
     model = create_model()
     evals = model.train(train_set, val_set)
     tk.notifications.post_evals(evals)
@@ -69,7 +48,7 @@ def train():
 def validate():
     _, val_set = load_data()
     model = create_model().load()
-    pred = model.predict(val_set)[0]
+    pred = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
         tk.evaluations.print_classification_metrics(val_set.labels, pred)
 
@@ -84,8 +63,7 @@ def create_model():
         nfold=1,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
-        epochs=30,
-        callbacks=[tk.callbacks.CosineAnnealing()],
+        epochs=200,
         models_dir=models_dir,
         model_name_format="model.h5",
         skip_if_exists=False,
@@ -98,32 +76,24 @@ def create_network() -> tf.keras.models.Model:
     backbone = tk.applications.xception.xception(input_tensor=x)
     x = backbone.output
     x = tk.layers.GeM2D()(x)
-    x = tf.keras.layers.Dense(
-        num_classes,
-        kernel_initializer="zeros",
-        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-        name="logits",
-    )(x)
-    x = tf.keras.layers.Activation(activation="softmax")(x)
+    x = tf.keras.layers.Dense(num_classes, kernel_initializer="zeros")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    coef, intercept = tk.utils.load(models_dir / "linear.pkl")
-    model.get_layer("logits").set_weights([coef.T, intercept])
-
-    base_lr = 1e-3 * batch_size * tk.hvd.size()
+    base_lr = 1e-6 * batch_size * tk.hvd.size()
     optimizer = tf.keras.optimizers.SGD(
         learning_rate=base_lr, momentum=0.9, nesterov=True
     )
 
-    def loss(y_true, y_pred):
-        del y_pred
-        logits = model.get_layer("logits").output
+    def loss(y_true, logits):
         return tk.losses.categorical_crossentropy(
             y_true, logits, from_logits=True, label_smoothing=0.2
         )
 
     tk.models.compile(model, optimizer, loss, ["acc"])
-    return model
+
+    x = tf.keras.layers.Activation(activation="softmax")(x)
+    prediction_model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    return model, prediction_model
 
 
 class MyDataLoader(tk.data.DataLoader):

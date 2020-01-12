@@ -15,7 +15,6 @@ acc:       0.969
 """
 import functools
 import pathlib
-import random
 
 import albumentations as A
 import numpy as np
@@ -61,7 +60,7 @@ def predict():
 
 
 def _evaluate(model, val_set):
-    pred_val = model.predict(val_set)[0]
+    pred_val = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
         evals = tk.evaluations.print_ss_metrics(val_set.labels / 255, pred_val, 0.5)
         tk.notifications.post_evals(evals)
@@ -71,7 +70,7 @@ def _evaluate(model, val_set):
 def _predict(model):
     test_set = load_test_data()
     test_set.labels = np.zeros_like(test_set.data)  # エラー除けのダミー
-    pred_test = model.predict(test_set)[0]
+    pred_test = model.predict(test_set, fold=0)
 
     if tk.hvd.is_master():
         df = pd.DataFrame()
@@ -112,7 +111,7 @@ def create_model():
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
         epochs=300,
-        callbacks=[tk.callbacks.CosineAnnealing()],
+        # callbacks=[tk.callbacks.CosineAnnealing()],
         models_dir=models_dir,
         model_name_format="model.h5",
         skip_if_exists=False,
@@ -191,14 +190,15 @@ def create_network() -> tf.keras.models.Model:
     x = tf.keras.layers.Activation("sigmoid")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    base_lr = 1e-3 * batch_size * tk.hvd.size()
-    optimizer = tk.optimizers.SGDEx(
-        learning_rate=base_lr,
-        momentum=0.9,
-        nesterov=True,
-        clipnorm=10.0,
-        lr_multipliers={backbone: 0.1},
-    )
+    # base_lr = 1e-3 * batch_size * tk.hvd.size()
+    # optimizer = tk.optimizers.SGDEx(
+    #     learning_rate=base_lr,
+    #     momentum=0.9,
+    #     nesterov=True,
+    #     clipnorm=10.0,
+    #     lr_multipliers={backbone: 0.1},
+    # )
+    optimizer = tf.keras.optimizers.Adam(1e-4)
 
     def loss(y_true, y_pred):
         return tk.losses.lovasz_hinge(y_true, y_pred)
@@ -232,7 +232,7 @@ class MyDataLoader(tk.data.DataLoader):
 
     def get_data(self, dataset: tk.data.Dataset, index: int):
         X, y = dataset.get_data(index)
-        d = self.aug(image=X, mask=y, rand=random)
+        d = self.aug(image=X, mask=y)
         X = tk.applications.darknet53.preprocess_input(d["image"])
         y = d["mask"] / 255
         y = y.reshape(input_shape)

@@ -38,7 +38,7 @@ def train():
 def validate():
     _, val_set = tk.datasets.load_cifar100()
     model = create_model().load()
-    pred = model.predict(val_set)[0]
+    pred = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
         tk.evaluations.print_classification_metrics(val_set.labels, pred)
 
