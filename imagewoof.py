@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""imagewoofの実験用コード。(こっちはtrainとvalをひっくり返していない。)
+"""imagewoofの実験用コード。
 
 <https://github.com/fastai/imagenette>
 
@@ -9,10 +9,10 @@
 - Must start with random weights
 - Must be one of the size/#epoch combinations listed in the table
 
-## 実行結果 (256px/400epochs, LB: 90.2)
+## 実行結果 (256px/80epochs, LB: 89.0)
 
-val_loss: 1.226
-val_acc:  0.910
+val_loss: 1.713
+val_acc:  0.902
 
 """
 import functools
@@ -64,7 +64,7 @@ def create_model():
         nfold=1,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
-        epochs=400,
+        epochs=80,
         callbacks=[tk.callbacks.CosineAnnealing()],
         models_dir=models_dir,
         model_name_format="model.h5",
