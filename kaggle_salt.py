@@ -111,7 +111,7 @@ def create_model():
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
         epochs=300,
-        # callbacks=[tk.callbacks.CosineAnnealing()],
+        callbacks=[tk.callbacks.CosineAnnealing()],
         models_dir=models_dir,
         model_name_format="model.h5",
         skip_if_exists=False,
@@ -187,26 +187,27 @@ def create_network() -> tf.keras.models.Model:
     )(x)
     x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/1
     x = tf.keras.layers.Cropping2D(((5, 6), (5, 6)))(x)  # 101
-    x = tf.keras.layers.Activation("sigmoid")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    # base_lr = 1e-3 * batch_size * tk.hvd.size()
-    # optimizer = tk.optimizers.SGDEx(
-    #     learning_rate=base_lr,
-    #     momentum=0.9,
-    #     nesterov=True,
-    #     clipnorm=10.0,
-    #     lr_multipliers={backbone: 0.1},
-    # )
-    optimizer = tf.keras.optimizers.Adam(1e-4)
+    learning_rate = 1e-3 * batch_size * tk.hvd.size() * app.num_replicas_in_sync
+    optimizer = tk.optimizers.SGDEx(
+        learning_rate=learning_rate,
+        momentum=0.9,
+        nesterov=True,
+        clipnorm=10.0,
+        lr_multipliers={backbone: 0.1},
+    )
 
-    def loss(y_true, y_pred):
-        return tk.losses.lovasz_hinge(y_true, y_pred)
+    def loss(y_true, logits):
+        return tk.losses.lovasz_binary_crossentropy(y_true, logits, from_logits=True)
 
     tk.models.compile(
         model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
     )
-    return model
+
+    x = tf.keras.layers.Activation("sigmoid")(x)
+    prediction_model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    return model, prediction_model
 
 
 class MyDataLoader(tk.data.DataLoader):
@@ -214,7 +215,9 @@ class MyDataLoader(tk.data.DataLoader):
 
     def __init__(self, data_augmentation=False):
         super().__init__(batch_size=batch_size)
-        self.data_augmentation = data_augmentation
+        self.data_augmentation = data_augmentation, data_per_sample = (
+            2 if data_augmentation else 1
+        )
         if self.data_augmentation:
             self.aug = A.Compose(
                 [
@@ -236,6 +239,14 @@ class MyDataLoader(tk.data.DataLoader):
         X = tk.applications.darknet53.preprocess_input(d["image"])
         y = d["mask"] / 255
         y = y.reshape(input_shape)
+        return X, y
+
+    def get_sample(self, data: list) -> tuple:
+        if self.data_augmentation:
+            sample1, sample2 = data
+            X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")
+        else:
+            X, y = super().get_sample(data)
         return X, y
 
 

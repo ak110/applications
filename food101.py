@@ -75,7 +75,7 @@ def create_network() -> tf.keras.models.Model:
     inputs = x = tf.keras.layers.Input((None, None, 3))
     backbone = tk.applications.xception.xception(input_tensor=x)
     x = backbone.output
-    x = tk.layers.GeM2D()(x)
+    x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(num_classes, kernel_initializer="zeros")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 

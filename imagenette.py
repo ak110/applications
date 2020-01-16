@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。(trainとvalをひっくり返している。)
 
-val_loss: 1.261
-val_acc:  0.877
+val_loss: 1.826
+val_acc:  0.870
 
 """
 import functools
@@ -129,7 +129,7 @@ def create_network() -> tf.keras.models.Model:
     x = blocks(256, 4)(x)  # 1/8
     x = blocks(512, 4)(x)  # 1/16
     x = blocks(512, 4)(x)  # 1/32
-    x = tk.layers.GeM2D()(x)
+    x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(
         num_classes,
         use_bias=False,

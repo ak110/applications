@@ -11,8 +11,8 @@
 
 ## 実行結果 (256px/80epochs, LB: 89.0)
 
-val_loss: 1.713
-val_acc:  0.902
+val_loss: 1.693
+val_acc:  0.908
 
 """
 import functools
@@ -138,7 +138,7 @@ def create_network() -> tf.keras.models.Model:
     x = blocks(256, 4)(x)  # 1/8
     x = blocks(512, 4)(x)  # 1/16
     x = blocks(512, 4)(x)  # 1/32
-    x = tk.layers.GeM2D()(x)
+    x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(
         num_classes, kernel_regularizer=tf.keras.regularizers.l2(1e-4), name="logits",
     )(x)
@@ -175,7 +175,7 @@ class MyDataLoader(tk.data.DataLoader):
                     tk.image.RandomTransform(
                         width=input_shape[1], height=input_shape[0]
                     ),
-                    tk.image.RandomColorAugmentors(noisy=True),
+                    # tk.image.RandomColorAugmentors(noisy=True),
                 ]
             )
             self.aug2 = tk.image.RandomErasing()

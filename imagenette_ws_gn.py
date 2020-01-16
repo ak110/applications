@@ -126,10 +126,10 @@ def create_network() -> tf.keras.models.Model:
     x = blocks(256, 4)(x)  # 1/8
     x = blocks(512, 4)(x)  # 1/16
     x = blocks(512, 4)(x)  # 1/32
-    x = tk.layers.GeM2D()(x)
+    x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(
         num_classes,
-        kernel_initializer="zeros",
+        use_bias=False,
         kernel_regularizer=tf.keras.regularizers.l2(1e-4),
         name="logits",
     )(x)
