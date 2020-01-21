@@ -194,7 +194,6 @@ def create_network() -> tf.keras.models.Model:
         learning_rate=learning_rate,
         momentum=0.9,
         nesterov=True,
-        clipnorm=10.0,
         lr_multipliers={backbone: 0.1},
     )
 
@@ -214,10 +213,10 @@ class MyDataLoader(tk.data.DataLoader):
     """DataLoader"""
 
     def __init__(self, data_augmentation=False):
-        super().__init__(batch_size=batch_size)
-        self.data_augmentation = data_augmentation, data_per_sample = (
-            2 if data_augmentation else 1
+        super().__init__(
+            batch_size=batch_size, data_per_sample=2 if data_augmentation else 1
         )
+        self.data_augmentation = data_augmentation
         if self.data_augmentation:
             self.aug = A.Compose(
                 [

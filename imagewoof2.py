@@ -11,8 +11,8 @@
 
 ## 実行結果 (256px/80epochs, LB: 89.0)
 
-val_loss: 1.693
-val_acc:  0.908
+[INFO ] val_loss: 2.057
+[INFO ] val_acc:  0.894
 
 """
 import functools
@@ -26,7 +26,7 @@ import pytoolkit as tk
 num_classes = 10
 input_shape = (256, 256, 3)
 batch_size = 16
-data_dir = pathlib.Path(f"data/imagewoof")
+data_dir = pathlib.Path(f"data/imagewoof2")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
 app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
