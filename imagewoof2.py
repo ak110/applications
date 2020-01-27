@@ -11,8 +11,8 @@
 
 ## 実行結果 (256px/80epochs, LB: 89.0)
 
-[INFO ] val_loss: 2.057
-[INFO ] val_acc:  0.894
+[INFO ] val_loss: 2.043
+[INFO ] val_acc:  0.899
 
 """
 import functools
@@ -127,14 +127,7 @@ def create_network() -> tf.keras.models.Model:
     )  # 1/2
     x = bn()(x)
     x = act()(x)
-    x = tf.keras.layers.concatenate(
-        [
-            conv2d(64, kernel_size=2, strides=2)(x),
-            conv2d(64, kernel_size=4, strides=2)(x),
-        ]
-    )  # 1/4
-    x = bn()(x)
-    x = blocks(128, 2, False)(x)
+    x = blocks(128, 2)(x)
     x = blocks(256, 4)(x)  # 1/8
     x = blocks(512, 4)(x)  # 1/16
     x = blocks(512, 4)(x)  # 1/32
