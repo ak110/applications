@@ -177,7 +177,7 @@ def create_network() -> tf.keras.models.Model:
             )
             for i in range(num_classes)
         ]
-        return tf.reduce_mean(losses, axis=0)
+        return tf.math.reduce_mean(losses, axis=0)
 
     tk.models.compile(
         model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
