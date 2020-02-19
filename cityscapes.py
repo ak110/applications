@@ -194,9 +194,7 @@ class MyDataLoader(tk.data.DataLoader):
         if self.data_augmentation:
             self.aug = A.Compose(
                 [
-                    tk.image.RandomTransform(
-                        width=input_shape[1], height=input_shape[0]
-                    ),
+                    tk.image.RandomTransform(size=input_shape[:2]),
                     tk.image.RandomColorAugmentors(noisy=True),
                 ]
             )

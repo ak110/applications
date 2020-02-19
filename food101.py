@@ -108,8 +108,7 @@ class MyDataLoader(tk.data.DataLoader):
             self.aug1 = A.Compose(
                 [
                     tk.image.RandomTransform(
-                        width=train_shape[1],
-                        height=train_shape[0],
+                        size=train_shape[:2],
                         base_scale=predict_shape[0] / train_shape[0],
                     ),
                     tk.image.RandomColorAugmentors(noisy=True),

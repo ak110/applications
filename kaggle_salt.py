@@ -198,7 +198,7 @@ def create_network() -> tf.keras.models.Model:
     )
 
     def loss(y_true, logits):
-        return tk.losses.lovasz_binary_crossentropy(y_true, logits, from_logits=True)
+        return tk.losses.lovasz_hinge(y_true, logits, from_logits=True)
 
     tk.models.compile(
         model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
@@ -220,9 +220,7 @@ class MyDataLoader(tk.data.DataLoader):
         if self.data_augmentation:
             self.aug = A.Compose(
                 [
-                    tk.image.RandomTransform(
-                        width=input_shape[1], height=input_shape[0]
-                    ),
+                    tk.image.RandomTransform(size=input_shape[:2]),
                     tk.image.RandomBlur(p=0.125),
                     tk.image.RandomUnsharpMask(p=0.125),
                     tk.image.RandomBrightness(p=0.25),

@@ -118,7 +118,7 @@ def create_network() -> tf.keras.models.Model:
     )  # 1/2
     x = bn()(x)
     x = act()(x)
-    x = blocks(128, 2)(x)
+    x = blocks(128, 4)(x)
     x = blocks(256, 4)(x)  # 1/8
     x = blocks(512, 4)(x)  # 1/16
     x = blocks(512, 4)(x)  # 1/32
@@ -160,8 +160,7 @@ class MyDataLoader(tk.data.DataLoader):
             self.aug1 = A.Compose(
                 [
                     tk.image.RandomTransform(
-                        width=train_shape[1],
-                        height=train_shape[0],
+                        size=train_shape[:2],
                         base_scale=predict_shape[0] / train_shape[0],
                     ),
                     tk.image.RandomColorAugmentors(noisy=True),
