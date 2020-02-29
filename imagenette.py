@@ -15,7 +15,7 @@ import pytoolkit as tk
 
 num_classes = 10
 train_shape = (320, 320, 3)
-predict_shape = (480, 480, 3)
+predict_shape = (320, 320, 3)
 batch_size = 16
 data_dir = pathlib.Path(f"data/imagenette")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")

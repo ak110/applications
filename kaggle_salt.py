@@ -156,7 +156,7 @@ def create_network() -> tf.keras.models.Model:
     x = tf.pad(x, ((0, 0), (5, 6), (5, 6), (0, 0)), mode="reflect")  # 112
     x = tf.keras.layers.UpSampling2D()(x)
     x = tf.keras.layers.concatenate([x, x, x])
-    backbone = tk.applications.darknet53.darknet53(input_tensor=x)
+    backbone = tk.applications.darknet53.create(input_tensor=x)
     x = backbone.output
     # x = tk.layers.ScaleGradient(scale=0.1)(x)
     x = conv2d(256)(x)
