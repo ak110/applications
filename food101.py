@@ -116,7 +116,7 @@ class MyDataLoader(tk.data.DataLoader):
             )
             self.aug2 = tk.image.RandomErasing()
         else:
-            self.aug1 = tk.image.Resize(width=predict_shape[1], height=predict_shape[0])
+            self.aug1 = tk.image.Resize(size=predict_shape[:2])
             self.aug2 = None
 
     def get_data(self, dataset: tk.data.Dataset, index: int):

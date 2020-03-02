@@ -228,7 +228,7 @@ class MyDataLoader(tk.data.DataLoader):
                 ]
             )
         else:
-            self.aug = tk.image.Resize(width=input_shape[1], height=input_shape[0])
+            self.aug = tk.image.Resize(size=input_shape[:2])
 
     def get_data(self, dataset: tk.data.Dataset, index: int):
         X, y = dataset.get_data(index)
