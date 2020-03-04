@@ -120,7 +120,7 @@ def create_model():
     )
 
 
-def create_network() -> tf.keras.models.Model:
+def create_network():
     conv2d = functools.partial(
         tf.keras.layers.Conv2D,
         kernel_size=3,
@@ -169,12 +169,12 @@ def create_network() -> tf.keras.models.Model:
     x = tk.layers.CoordChannel2D(x_channel=False)(x)
     x = conv2d(256)(x)
     x = bn()(x)
-    d = backbone.get_layer("block12_add").output  # 1/4
+    d = tk.applications.darknet53.get_1_over_4(backbone)  # 1/4
     # d = tk.layers.ScaleGradient(scale=0.1)(d)
     d = conv2d(256)(d)
     d = bn(center=False)(d)
     x = tf.keras.layers.add([x, d])
-    d = backbone.get_layer("block2_add").output  # 1/1
+    d = tk.applications.darknet53.get_1_over_1(backbone)  # 1/1
     # d = tk.layers.ScaleGradient(scale=0.1)(d)
     d = conv2d(256, kernel_size=4, strides=4)(d)
     d = bn(center=False)(d)

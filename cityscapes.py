@@ -73,7 +73,7 @@ def create_model():
     )
 
 
-def create_network() -> tf.keras.models.Model:
+def create_network():
     conv2d = functools.partial(
         tk.layers.WSConv2D,
         kernel_size=3,
@@ -182,7 +182,7 @@ def create_network() -> tf.keras.models.Model:
     tk.models.compile(
         model, optimizer, loss, [tk.metrics.binary_accuracy, tk.metrics.binary_iou]
     )
-    return model
+    return model, model
 
 
 class MyDataLoader(tk.data.DataLoader):

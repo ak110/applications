@@ -102,7 +102,7 @@ def create_model():
     )
 
 
-def create_network() -> tf.keras.models.Model:
+def create_network():
     inputs = x = tf.keras.layers.Input(input_shape)
     x = tf.keras.layers.Embedding(65536, 256, mask_zero=True)(x)
     x1 = tf.keras.layers.GlobalAveragePooling1D()(x)
@@ -115,7 +115,7 @@ def create_network() -> tf.keras.models.Model:
     )(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
     tk.models.compile(model, "adam", "categorical_crossentropy", ["acc"])
-    return model
+    return model, model
 
 
 class MyDataLoader(tk.data.DataLoader):

@@ -93,7 +93,7 @@ def create_model():
     )
 
 
-def create_network() -> tf.keras.models.Model:
+def create_network():
     dense = functools.partial(
         tf.keras.layers.Dense,
         use_bias=False,
@@ -131,7 +131,7 @@ def create_network() -> tf.keras.models.Model:
     )
 
     tk.models.compile(model, optimizer, "mse", ["mae"])
-    return model
+    return model, model
 
 
 class MyDataLoader(tk.data.DataLoader):
