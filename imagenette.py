@@ -15,7 +15,7 @@ import pytoolkit as tk
 
 num_classes = 10
 train_shape = (320, 320, 3)
-predict_shape = (320, 320, 3)
+predict_shape = (480, 480, 3)
 batch_size = 16
 data_dir = pathlib.Path(f"data/imagenette")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
@@ -25,7 +25,7 @@ logger = tk.log.get(__name__)
 
 @app.command(logfile=False)
 def check():
-    create_model().check()
+    create_model().check(load_data()[0].slice(range(16)))
 
 
 @app.command(use_horovod=True)
@@ -119,13 +119,15 @@ def create_network():
     )  # 1/2
     x = bn()(x)
     x = act()(x)
-    x = blocks(128, 2)(x)  # 1/4
-    x = blocks(256, 2)(x)  # 1/8
+    x = blocks(128, 4)(x)  # 1/4
+    x = blocks(256, 4)(x)  # 1/8
     x = blocks(512, 4)(x)  # 1/16
     x = blocks(512, 4)(x)  # 1/32
     x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(
-        num_classes, kernel_regularizer=tf.keras.regularizers.l2(1e-4)
+        num_classes,
+        kernel_initializer="zeros",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
     )(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
@@ -176,7 +178,6 @@ class MyDataLoader(tk.data.DataLoader):
         X, y = dataset.get_data(index)
         X = tk.ndimage.load(X)
         X = self.aug1(image=X)["image"]
-        X = tk.ndimage.ensure_channel_dim(X)
         y = tf.keras.utils.to_categorical(y, num_classes) if y is not None else None
         return X, y
 
@@ -185,7 +186,6 @@ class MyDataLoader(tk.data.DataLoader):
             sample1, sample2 = data
             X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")
             X = self.aug2(image=X)["image"]
-            X = tk.ndimage.ensure_channel_dim(X)
         else:
             X, y = super().get_sample(data)
         X = tk.ndimage.preprocess_tf(X)

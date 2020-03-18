@@ -9,10 +9,10 @@
 - Must start with random weights
 - Must be one of the size/#epoch combinations listed in the table
 
-## 実行結果 (256px/80epochs, LB: 89.0)
+## 実行結果 (256px/80epochs, LB: 90.48%)
 
-[INFO ] val_loss: 2.043
-[INFO ] val_acc:  0.899
+val_loss: 2.0056
+val_acc:  0.9022
 
 """
 import functools
@@ -23,6 +23,7 @@ import tensorflow as tf
 
 import pytoolkit as tk
 
+runs = 5
 num_classes = 10
 input_shape = (256, 256, 3)
 batch_size = 16
@@ -34,15 +35,15 @@ logger = tk.log.get(__name__)
 
 @app.command(logfile=False)
 def check():
-    create_model().check()
+    create_model().check(load_data()[0].slice(range(16)))
 
 
 @app.command(use_horovod=True)
 def train():
     train_set, val_set = load_data()
-    model = create_model()
-    evals = model.train(train_set, val_set)
-    tk.notifications.post_evals(evals)
+    evals_list = [create_model().train(train_set, val_set) for _ in range(runs)]
+    evals = tk.evaluations.mean(evals_list)
+    tk.notifications.post_evals(evals, precision=4)
 
 
 @app.command(use_horovod=True)
@@ -62,11 +63,12 @@ def create_model():
     return tk.pipeline.KerasModel(
         create_network_fn=create_network,
         nfold=1,
-        train_data_loader=MyDataLoader(data_augmentation=True),
-        val_data_loader=MyDataLoader(),
+        models_dir=models_dir,
+        train_data_loader=MyDataLoader(mode="train"),
+        refine_data_loader=MyDataLoader(mode="refine"),
+        val_data_loader=MyDataLoader(mode="test"),
         epochs=80,
         callbacks=[tk.callbacks.CosineAnnealing()],
-        models_dir=models_dir,
         model_name_format="model.h5",
         skip_if_exists=False,
         use_horovod=True,
@@ -127,49 +129,54 @@ def create_network():
     )  # 1/2
     x = bn()(x)
     x = act()(x)
-    x = blocks(128, 2)(x)
+    x = blocks(128, 4)(x)  # 1/4
     x = blocks(256, 4)(x)  # 1/8
     x = blocks(512, 4)(x)  # 1/16
     x = blocks(512, 4)(x)  # 1/32
     x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(
-        num_classes, kernel_regularizer=tf.keras.regularizers.l2(1e-4), name="logits",
+        num_classes,
+        kernel_initializer="zeros",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
     )(x)
-    x = tf.keras.layers.Activation(activation="softmax")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    base_lr = 1e-3 * batch_size * tk.hvd.size()
+    learning_rate = 1e-3 * batch_size * tk.hvd.size() * app.num_replicas_in_sync
     optimizer = tf.keras.optimizers.SGD(
-        learning_rate=base_lr, momentum=0.9, nesterov=True
+        learning_rate=learning_rate, momentum=0.9, nesterov=True
     )
 
-    def loss(y_true, y_pred):
-        del y_pred
-        logits = model.get_layer("logits").output
+    def loss(y_true, logits):
         return tk.losses.categorical_crossentropy(
             y_true, logits, from_logits=True, label_smoothing=0.2
         )
 
     tk.models.compile(model, optimizer, loss, ["acc"])
-    return model, model
+
+    x = tf.keras.layers.Activation("softmax")(x)
+    prediction_model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    return model, prediction_model
 
 
 class MyDataLoader(tk.data.DataLoader):
     """DataLoader"""
 
-    def __init__(self, data_augmentation=False):
+    def __init__(self, mode):
         super().__init__(
-            batch_size=batch_size, data_per_sample=2 if data_augmentation else 1,
+            batch_size=batch_size, data_per_sample=2 if mode == "train" else 1,
         )
-        self.data_augmentation = data_augmentation
-        if self.data_augmentation:
+        self.mode = mode
+        if self.mode == "train":
             self.aug1 = A.Compose(
                 [
                     tk.image.RandomTransform(size=input_shape[:2]),
-                    # tk.image.RandomColorAugmentors(noisy=True),
+                    tk.image.RandomColorAugmentors(noisy=False),
                 ]
             )
             self.aug2 = tk.image.RandomErasing()
+        elif self.mode == "refine":
+            self.aug1 = tk.image.RandomTransform.create_refine(size=input_shape[:2])
+            self.aug2 = None
         else:
             self.aug1 = tk.image.Resize(size=input_shape[:2])
             self.aug2 = None
@@ -178,11 +185,11 @@ class MyDataLoader(tk.data.DataLoader):
         X, y = dataset.get_data(index)
         X = tk.ndimage.load(X)
         X = self.aug1(image=X)["image"]
-        y = tf.keras.utils.to_categorical(y, num_classes)
+        y = tf.keras.utils.to_categorical(y, num_classes) if y is not None else None
         return X, y
 
     def get_sample(self, data: list) -> tuple:
-        if self.data_augmentation:
+        if self.mode == "train":
             sample1, sample2 = data
             X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")
             X = self.aug2(image=X)["image"]
