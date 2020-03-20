@@ -71,7 +71,6 @@ def create_model():
         callbacks=[tk.callbacks.CosineAnnealing()],
         model_name_format="model.h5",
         skip_if_exists=False,
-        use_horovod=True,
     )
 
 

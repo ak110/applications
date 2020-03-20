@@ -115,7 +115,6 @@ def create_model():
         models_dir=models_dir,
         model_name_format="model.h5",
         skip_if_exists=False,
-        use_horovod=True,
         on_batch_fn=_tta,
     )
 
