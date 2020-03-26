@@ -64,12 +64,14 @@ def validate():
 
 def load_data():
     df_train = pd.read_csv(
-        "https://raw.githubusercontent.com/ozt-ca/tjo.hatenablog.samples/master/r_samples/public_lib/jp/aozora/aozora_8writers_train.csv",
+        "https://raw.githubusercontent.com/ozt-ca/tjo.hatenablog.samples"
+        "/master/r_samples/public_lib/jp/aozora/aozora_8writers_train.csv",
         header=None,
         names=["text", "class"],
     )
     df_test = pd.read_csv(
-        "https://raw.githubusercontent.com/ozt-ca/tjo.hatenablog.samples/master/r_samples/public_lib/jp/aozora/aozora_8writers_test.csv",
+        "https://raw.githubusercontent.com/ozt-ca/tjo.hatenablog.samples"
+        "/master/r_samples/public_lib/jp/aozora/aozora_8writers_test.csv",
         header=None,
         names=["text", "class"],
     )

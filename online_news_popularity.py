@@ -60,10 +60,12 @@ def validate(model=None):
 
 def load_data():
     df_train = pd.read_csv(
-        "https://github.com/ozt-ca/tjo.hatenablog.samples/raw/master/r_samples/public_lib/jp/exp_uci_sets/online_news_popularity/ONP_train.csv"
+        "https://github.com/ozt-ca/tjo.hatenablog.samples"
+        "/raw/master/r_samples/public_lib/jp/exp_uci_sets/online_news_popularity/ONP_train.csv"
     )
     df_test = pd.read_csv(
-        "https://github.com/ozt-ca/tjo.hatenablog.samples/raw/master/r_samples/public_lib/jp/exp_uci_sets/online_news_popularity/ONP_test.csv"
+        "https://github.com/ozt-ca/tjo.hatenablog.samples"
+        "/raw/master/r_samples/public_lib/jp/exp_uci_sets/online_news_popularity/ONP_test.csv"
     )
     y_train = df_train["shares"]
     X_train = df_train.drop("shares", axis=1)

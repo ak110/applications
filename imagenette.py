@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。(trainとvalをひっくり返している。)
 
-[INFO ] val_loss: 1.771
-[INFO ] val_acc:  0.872
+val_loss: 1.871
+val_acc:  0.875
 
 """
 import functools
