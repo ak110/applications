@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""転移学習の練習用コード。(Food-101)
+"""転移学習の練習用コード。Food-101を10クラスの不均衡データにしたもの。
 
-train: 25250 -> 1010 samples
+train: 25250 -> 250+10*9 = 340 samples
 val: 75750 samples
 
-val_acc:     0.523
+val_acc:     0.573
 
 """
 import pathlib
 
 import albumentations as A
+import numpy as np
 import tensorflow as tf
 
 import pytoolkit as tk
 
-num_classes = 101
+num_classes = 10
 train_shape = (256, 256, 3)
 predict_shape = (256, 256, 3)
 batch_size = 16
@@ -46,9 +47,25 @@ def validate():
         tk.evaluations.print_classification_metrics(val_set.labels, pred)
 
 
+@tk.cache.memoize("cache___", prefix="food_ib")
 def load_data():
     train_set, val_set = tk.datasets.load_trainval_folders(data_dir, swap=True)
-    train_set = tk.datasets.extract_class_balanced(train_set, num_classes, 10)
+    indices = np.concatenate(
+        [
+            np.where(train_set.labels == 0)[0],
+            np.where(train_set.labels == 1)[0][:10],
+            np.where(train_set.labels == 2)[0][:10],
+            np.where(train_set.labels == 3)[0][:10],
+            np.where(train_set.labels == 4)[0][:10],
+            np.where(train_set.labels == 5)[0][:10],
+            np.where(train_set.labels == 6)[0][:10],
+            np.where(train_set.labels == 7)[0][:10],
+            np.where(train_set.labels == 8)[0][:10],
+            np.where(train_set.labels == 9)[0][:10],
+        ]
+    )
+    train_set = train_set.slice(indices)
+    val_set = val_set.slice(np.where(val_set.labels <= 9)[0])
     return train_set, val_set
 
 
@@ -59,7 +76,7 @@ def create_model():
         nfold=1,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
-        epochs=1800,
+        epochs=100,
         callbacks=[tk.callbacks.CosineAnnealing()],
         models_dir=models_dir,
         model_name_format="model.h5",
@@ -75,7 +92,7 @@ def create_network():
     x = tf.keras.layers.Dense(num_classes, kernel_initializer="zeros")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    base_lr = 1e-4 * batch_size * tk.hvd.size()
+    base_lr = 1e-3 * batch_size * tk.hvd.size()
     optimizer = tf.keras.optimizers.SGD(
         learning_rate=base_lr, momentum=0.9, nesterov=True
     )
