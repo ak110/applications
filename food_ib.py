@@ -4,7 +4,7 @@
 train: 25250 -> 250+10*9 = 340 samples
 val: 75750 samples
 
-val_acc:     0.573
+val_acc:     0.577
 
 """
 import pathlib
@@ -76,7 +76,7 @@ def create_model():
         nfold=1,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
-        epochs=100,
+        epochs=1000,
         callbacks=[tk.callbacks.CosineAnnealing()],
         models_dir=models_dir,
         model_name_format="model.h5",
@@ -92,15 +92,13 @@ def create_network():
     x = tf.keras.layers.Dense(num_classes, kernel_initializer="zeros")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    base_lr = 1e-3 * batch_size * tk.hvd.size()
+    base_lr = 1e-4 * batch_size * tk.hvd.size()
     optimizer = tf.keras.optimizers.SGD(
         learning_rate=base_lr, momentum=0.9, nesterov=True
     )
 
     def loss(y_true, logits):
-        return tk.losses.categorical_crossentropy(
-            y_true, logits, from_logits=True, label_smoothing=0.2
-        )
+        return tk.losses.categorical_focal_loss(y_true, logits, from_logits=True)
 
     tk.models.compile(model, optimizer, loss, ["acc"])
 
