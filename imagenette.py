@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。(trainとvalをひっくり返している。)
 
-val_loss: 1.871
-val_acc:  0.875
+val_loss: 1.883
+val_acc:  0.879
 
 """
 import functools
@@ -83,7 +83,7 @@ def create_network():
         def layers(x):
             if down:
                 in_filters = x.shape[-1]
-                g = conv2d(in_filters // 8)(x)
+                g = conv2d(in_filters)(x)
                 g = bn()(g)
                 g = act()(g)
                 g = conv2d(in_filters, use_bias=True, activation="sigmoid")(g)
