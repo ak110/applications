@@ -3,8 +3,8 @@
 
 Weight Standalization + GroupNormalization。重いので普段は使わない。
 
-val_loss: 1.744
-val_acc:  0.864
+[INFO ] val_loss: 1.704
+[INFO ] val_acc:  0.861
 
 """
 import functools
@@ -12,6 +12,7 @@ import pathlib
 
 import albumentations as A
 import tensorflow as tf
+import tensorflow_addons as tfa
 
 import pytoolkit as tk
 
@@ -27,7 +28,7 @@ logger = tk.log.get(__name__)
 
 @app.command(logfile=False)
 def check():
-    create_model().check()
+    create_model().check(load_data()[0].slice(range(16)))
 
 
 @app.command(use_horovod=True)
@@ -55,27 +56,32 @@ def create_model():
     return tk.pipeline.KerasModel(
         create_network_fn=create_network,
         nfold=1,
-        train_data_loader=MyDataLoader(data_augmentation=True),
-        val_data_loader=MyDataLoader(),
+        models_dir=models_dir,
+        train_data_loader=MyDataLoader(mode="train"),
+        refine_data_loader=MyDataLoader(mode="refine"),
+        val_data_loader=MyDataLoader(mode="test"),
         epochs=1800,
         callbacks=[tk.callbacks.CosineAnnealing()],
-        models_dir=models_dir,
         model_name_format="model.h5",
         skip_if_exists=False,
     )
 
 
 def create_network():
-    conv2d = functools.partial(
-        tk.layers.WSConv2D,
-        kernel_size=3,
-        padding="same",
-        use_bias=False,
-        kernel_initializer="he_uniform",
-        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-    )
+    def conv2d(*args, **kwargs):
+        return tfa.layers.WeightNormalization(
+            functools.partial(
+                tf.keras.layers.Conv2D,
+                kernel_size=3,
+                padding="same",
+                use_bias=False,
+                kernel_initializer="he_uniform",
+                kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+            )(*args, **kwargs)
+        )
+
     bn = functools.partial(
-        tk.layers.GroupNormalization, gamma_regularizer=tf.keras.regularizers.l2(1e-4),
+        tfa.layers.GroupNormalization, gamma_regularizer=tf.keras.regularizers.l2(1e-4),
     )
     act = functools.partial(tf.keras.layers.Activation, "relu")
 
@@ -83,7 +89,7 @@ def create_network():
         def layers(x):
             if down:
                 in_filters = x.shape[-1]
-                g = conv2d(in_filters // 8)(x)
+                g = conv2d(in_filters)(x)
                 g = bn()(g)
                 g = act()(g)
                 g = tf.keras.layers.Conv2D(
@@ -116,50 +122,52 @@ def create_network():
         return layers
 
     inputs = x = tf.keras.layers.Input((None, None, 3))
-    x = conv2d(64, kernel_size=8, strides=2)(x)  # 1/2
+    x = tf.keras.layers.concatenate(
+        [
+            conv2d(16, kernel_size=2, strides=2)(x),
+            conv2d(16, kernel_size=4, strides=2)(x),
+            conv2d(16, kernel_size=6, strides=2)(x),
+            conv2d(16, kernel_size=8, strides=2)(x),
+        ]
+    )  # 1/2
     x = bn()(x)
     x = act()(x)
-    x = conv2d(128, kernel_size=4, strides=2)(x)  # 1/4
-    x = bn()(x)
-    x = blocks(128, 2, down=False)(x)
+    x = blocks(128, 4)(x)  # 1/4
     x = blocks(256, 4)(x)  # 1/8
     x = blocks(512, 4)(x)  # 1/16
     x = blocks(512, 4)(x)  # 1/32
     x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(
         num_classes,
-        use_bias=False,
+        kernel_initializer="zeros",
         kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-        name="logits",
     )(x)
-    x = tf.keras.layers.Activation(activation="softmax")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    base_lr = 1e-3 * batch_size * tk.hvd.size()
+    learning_rate = 1e-3 * batch_size * tk.hvd.size() * app.num_replicas_in_sync
     optimizer = tf.keras.optimizers.SGD(
-        learning_rate=base_lr, momentum=0.9, nesterov=True
+        learning_rate=learning_rate, momentum=0.9, nesterov=True
     )
 
-    def loss(y_true, y_pred):
-        del y_pred
-        logits = model.get_layer("logits").output
+    def loss(y_true, logits):
         return tk.losses.categorical_crossentropy(
             y_true, logits, from_logits=True, label_smoothing=0.2
         )
 
     tk.models.compile(model, optimizer, loss, ["acc"])
-    return model, model
+
+    x = tf.keras.layers.Activation("softmax")(x)
+    prediction_model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    return model, prediction_model
 
 
 class MyDataLoader(tk.data.DataLoader):
-    """DataLoader"""
-
-    def __init__(self, data_augmentation=False):
+    def __init__(self, mode):
         super().__init__(
-            batch_size=batch_size, data_per_sample=2 if data_augmentation else 1,
+            batch_size=batch_size, data_per_sample=2 if mode == "train" else 1,
         )
-        self.data_augmentation = data_augmentation
-        if self.data_augmentation:
+        self.mode = mode
+        if self.mode == "train":
             self.aug1 = A.Compose(
                 [
                     tk.image.RandomTransform(
@@ -170,6 +178,9 @@ class MyDataLoader(tk.data.DataLoader):
                 ]
             )
             self.aug2 = tk.image.RandomErasing()
+        elif self.mode == "refine":
+            self.aug1 = tk.image.RandomTransform.create_refine(size=predict_shape[:2])
+            self.aug2 = None
         else:
             self.aug1 = tk.image.Resize(size=predict_shape[:2])
             self.aug2 = None
@@ -178,11 +189,11 @@ class MyDataLoader(tk.data.DataLoader):
         X, y = dataset.get_data(index)
         X = tk.ndimage.load(X)
         X = self.aug1(image=X)["image"]
-        y = tf.keras.utils.to_categorical(y, num_classes)
+        y = tf.keras.utils.to_categorical(y, num_classes) if y is not None else None
         return X, y
 
     def get_sample(self, data: list) -> tuple:
-        if self.data_augmentation:
+        if self.mode == "train":
             sample1, sample2 = data
             X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")
             X = self.aug2(image=X)["image"]

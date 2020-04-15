@@ -11,8 +11,8 @@
 
 ## 実行結果 (256px/80epochs, LB: 90.48%)
 
-val_loss: 2.0056
-val_acc:  0.9022
+val_loss: 2.0723
+val_acc:  0.9056
 
 """
 import functools
@@ -93,7 +93,7 @@ def create_network():
         def layers(x):
             if down:
                 in_filters = x.shape[-1]
-                g = conv2d(in_filters // 8)(x)
+                g = conv2d(in_filters)(x)
                 g = bn()(g)
                 g = act()(g)
                 g = conv2d(in_filters, use_bias=True, activation="sigmoid")(g)
@@ -158,8 +158,6 @@ def create_network():
 
 
 class MyDataLoader(tk.data.DataLoader):
-    """DataLoader"""
-
     def __init__(self, mode):
         super().__init__(
             batch_size=batch_size, data_per_sample=2 if mode == "train" else 1,

@@ -148,8 +148,6 @@ def create_network():
 
 
 class MyDataLoader(tk.data.DataLoader):
-    """DataLoader"""
-
     def __init__(self, mode):
         super().__init__(
             batch_size=batch_size, data_per_sample=2 if mode == "train" else 1,

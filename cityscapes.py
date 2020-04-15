@@ -90,7 +90,7 @@ def create_network():
         def layers(x):
             if down:
                 in_filters = x.shape[-1]
-                g = conv2d(in_filters // 8)(x)
+                g = conv2d(in_filters)(x)
                 g = bn()(g)
                 g = act()(g)
                 g = tf.keras.layers.Conv2D(
@@ -185,8 +185,6 @@ def create_network():
 
 
 class MyDataLoader(tk.data.DataLoader):
-    """DataLoader"""
-
     def __init__(self, data_augmentation=False):
         super().__init__(batch_size=batch_size)
         self.data_augmentation = data_augmentation

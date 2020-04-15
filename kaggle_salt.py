@@ -164,7 +164,7 @@ def create_network():
     x = conv2d(32 * 8 * 8, kernel_size=1)(x)
     x = bn()(x)
     x = act()(x)
-    x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/4
+    x = tk.layers.SubpixelConv2D(scale=8)(x)  # 1/4
     x = tk.layers.CoordChannel2D(x_channel=False)(x)
     x = conv2d(256)(x)
     x = bn()(x)
@@ -173,18 +173,13 @@ def create_network():
     d = conv2d(256)(d)
     d = bn(center=False)(d)
     x = tf.keras.layers.add([x, d])
-    d = tk.applications.darknet53.get_1_over_1(backbone)  # 1/1
-    # d = tk.layers.ScaleGradient(scale=0.1)(d)
-    d = conv2d(256, kernel_size=4, strides=4)(d)
-    d = bn(center=False)(d)
-    x = tf.keras.layers.add([x, d])
     x = blocks(256, 8)(x)
     x = conv2d(
-        1 * 4 * 4,
+        1 * 2 * 2,
         use_bias=True,
         bias_initializer=tf.keras.initializers.constant(tk.math.logit(0.01)),
     )(x)
-    x = tk.layers.SubpixelConv2D(scale=4)(x)  # 1/1
+    x = tk.layers.SubpixelConv2D(scale=2)(x)  # 1/1
     x = tf.keras.layers.Cropping2D(((5, 6), (5, 6)))(x)  # 101
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
@@ -209,8 +204,6 @@ def create_network():
 
 
 class MyDataLoader(tk.data.DataLoader):
-    """DataLoader"""
-
     def __init__(self, data_augmentation=False):
         super().__init__(
             batch_size=batch_size, data_per_sample=2 if data_augmentation else 1

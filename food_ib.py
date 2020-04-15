@@ -109,8 +109,6 @@ def create_network():
 
 
 class MyDataLoader(tk.data.DataLoader):
-    """DataLoader"""
-
     def __init__(self, data_augmentation=False):
         super().__init__(
             batch_size=batch_size, data_per_sample=2 if data_augmentation else 1,
