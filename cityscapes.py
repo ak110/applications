@@ -19,7 +19,7 @@ import pytoolkit as tk
 num_classes = 19 + 1  # クラス+背景
 input_shape = (800, 800, 3)
 batch_size = 1
-data_dir = pathlib.Path(f"data/cityscapes")
+data_dir = pathlib.Path("data/cityscapes")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
 app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)

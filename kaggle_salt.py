@@ -25,7 +25,7 @@ import pytoolkit as tk
 
 input_shape = (101, 101, 1)
 batch_size = 16
-data_dir = pathlib.Path(f"data/kaggle_salt")
+data_dir = pathlib.Path("data/kaggle_salt")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
 app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
@@ -230,7 +230,7 @@ class MyDataLoader(tk.data.DataLoader):
         y = y.reshape(input_shape)
         return X, y
 
-    def get_sample(self, data: list) -> tuple:
+    def get_sample(self, data):
         if self.data_augmentation:
             sample1, sample2 = data
             X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")

@@ -145,7 +145,7 @@ class MyDataLoader(tk.data.DataLoader):
     def get_data(self, dataset: tk.data.Dataset, index: int):
         return dataset.get_data(index)
 
-    def get_sample(self, data: list) -> tuple:
+    def get_sample(self, data):
         if self.data_augmentation:
             sample1, sample2 = data
             X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")

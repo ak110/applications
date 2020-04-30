@@ -17,6 +17,7 @@ val_acc:  0.9056
 """
 import functools
 import pathlib
+import typing
 
 import albumentations as A
 import tensorflow as tf
@@ -27,7 +28,7 @@ runs = 5
 num_classes = 10
 input_shape = (256, 256, 3)
 batch_size = 16
-data_dir = pathlib.Path(f"data/imagewoof2")
+data_dir = pathlib.Path("data/imagewoof2")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
 app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
@@ -163,6 +164,7 @@ class MyDataLoader(tk.data.DataLoader):
             batch_size=batch_size, data_per_sample=2 if mode == "train" else 1,
         )
         self.mode = mode
+        self.aug2: typing.Any = None
         if self.mode == "train":
             self.aug1 = A.Compose(
                 [
@@ -185,7 +187,7 @@ class MyDataLoader(tk.data.DataLoader):
         y = tf.keras.utils.to_categorical(y, num_classes) if y is not None else None
         return X, y
 
-    def get_sample(self, data: list) -> tuple:
+    def get_sample(self, data):
         if self.mode == "train":
             sample1, sample2 = data
             X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")

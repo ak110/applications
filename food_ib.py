@@ -8,6 +8,7 @@ val_acc:     0.577
 
 """
 import pathlib
+import typing
 
 import albumentations as A
 import numpy as np
@@ -19,7 +20,7 @@ num_classes = 10
 train_shape = (256, 256, 3)
 predict_shape = (256, 256, 3)
 batch_size = 16
-data_dir = pathlib.Path(f"data/food-101")
+data_dir = pathlib.Path("data/food-101")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
 app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
@@ -114,6 +115,7 @@ class MyDataLoader(tk.data.DataLoader):
             batch_size=batch_size, data_per_sample=2 if data_augmentation else 1,
         )
         self.data_augmentation = data_augmentation
+        self.aug2: typing.Any = None
         if self.data_augmentation:
             self.aug1 = A.Compose(
                 [
@@ -136,7 +138,7 @@ class MyDataLoader(tk.data.DataLoader):
         y = tf.keras.utils.to_categorical(y, num_classes)
         return X, y
 
-    def get_sample(self, data: list) -> tuple:
+    def get_sample(self, data):
         if self.data_augmentation:
             sample1, sample2 = data
             X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")

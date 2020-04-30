@@ -24,7 +24,7 @@ params = {
 }
 seeds = np.arange(5) + 1
 # split_seeds = np.arange(5) + 1
-data_dir = pathlib.Path(f"data/kaggle_cat-in-the-dat")
+data_dir = pathlib.Path("data/kaggle_cat-in-the-dat")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
 app = tk.cli.App(output_dir=models_dir)
 logger = tk.log.get(__name__)
