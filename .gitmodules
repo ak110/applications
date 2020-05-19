@@ -1,3 +1,3 @@
 [submodule "pytoolkit"]
-	path = pytoolkit
+	path = pytoolkit.git
 	url = https://github.com/ak110/pytoolkit.git
