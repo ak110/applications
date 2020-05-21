@@ -2,6 +2,8 @@
 data
 data/
 models/
+# 検索除け用
+pytoolkit/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
