@@ -14,58 +14,80 @@ import tensorflow as tf
 
 import pytoolkit as tk
 
-num_classes = 10
-train_shape = (320, 320, 3)
-predict_shape = (480, 480, 3)
-batch_size = 16
+params: typing.Dict[str, typing.Any] = {
+    "num_classes": 10,
+    "train_shape": (320, 320, 3),
+    "predict_shape": (480, 480, 3),
+    "base_lr": 1e-3,
+    "batch_size": 16,
+    "epochs": 1800,
+}
 data_dir = pathlib.Path("data/imagenette")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
-app = tk.cli.App(output_dir=models_dir)
+app = tk.cli.App(output_dir=models_dir, use_horovod=True)
 logger = tk.log.get(__name__)
 
 
 @app.command(logfile=False)
 def check():
-    create_model().check(load_data()[0].slice(range(16)))
+    checking_set = load_data()[0].slice(range(16))
+    training_model, prediction_model = create_network(len(checking_set))
+    tk.models.check(
+        training_model=training_model,
+        prediction_model=prediction_model,
+        models_dir=models_dir,
+        dataset=checking_set,
+        training_data_loader=MyDataLoader(mode="training"),
+        prediction_data_loader=MyDataLoader(mode="prediction"),
+        save_mode="hdf5",
+    )
 
 
-@app.command(use_horovod=True)
+@app.command()
 def train():
-    train_set, val_set = load_data()
-    model = create_model()
-    evals = model.train(train_set, val_set)
-    tk.notifications.post_evals(evals)
+    training_set, validation_set = load_data()
+    training_model, prediction_model = create_network(len(training_set))
+    tk.models.fit(
+        training_model,
+        training_iterator=MyDataLoader(mode="training").load(training_set),
+        validation_iterator=MyDataLoader(mode="prediction").load(validation_set),
+        epochs=params["epochs"],
+    )
+    tk.models.save(prediction_model, models_dir / "model.h5")
+    if params["refine_epochs"] > 0:
+        tk.models.freeze_layers(training_model, tf.keras.layers.BatchNormalization)
+        optimizer = tf.keras.optimizers.SGD(
+            learning_rate=params["base_lr"] * app.num_workers,
+            momentum=0.9,
+            nesterov=True,
+        )
+        tk.models.compile(training_model, optimizer, loss, ["acc"])
+        tk.models.fit(
+            training_model,
+            training_iterator=MyDataLoader(mode="refining").load(training_set),
+            validation_iterator=MyDataLoader(mode="prediction").load(validation_set),
+            epochs=params["refine_epochs"],
+        )
+        tk.models.save(prediction_model, models_dir / "model.h5")
+    validate(prediction_model)
 
 
-@app.command(use_horovod=True)
-def validate(model=None):
-    _, val_set = load_data()
-    model = create_model().load()
-    pred = model.predict(val_set, fold=0)
-    if tk.hvd.is_master():
-        tk.evaluations.print_classification_metrics(val_set.labels, pred)
+@app.command()
+def validate(prediction_model=None):
+    training_set, validation_set = load_data()
+    prediction_model = prediction_model or create_network(len(training_set))[1]
+    tk.models.load_weights(prediction_model, models_dir / "model.h5")
+    pred = tk.models.predict(
+        prediction_model, MyDataLoader(mode="predict").load(validation_set)
+    )
+    tk.evaluations.print_classification_metrics(validation_set.labels, pred)
 
 
 def load_data():
     return tk.datasets.load_trainval_folders(data_dir, swap=True)
 
 
-def create_model():
-    return tk.pipeline.KerasModel(
-        create_network_fn=create_network,
-        nfold=1,
-        models_dir=models_dir,
-        train_data_loader=MyDataLoader(mode="train"),
-        refine_data_loader=MyDataLoader(mode="refine"),
-        val_data_loader=MyDataLoader(mode="test"),
-        epochs=1800,
-        callbacks=[tk.callbacks.CosineAnnealing()],
-        model_name_format="model.h5",
-        skip_if_exists=False,
-    )
-
-
-def create_network():
+def create_network(train_size):
     conv2d = functools.partial(
         tf.keras.layers.Conv2D,
         kernel_size=3,
@@ -119,27 +141,26 @@ def create_network():
     )  # 1/2
     x = bn()(x)
     x = act()(x)
-    x = blocks(128, 4)(x)  # 1/4
-    x = blocks(256, 4)(x)  # 1/8
-    x = blocks(512, 4)(x)  # 1/16
-    x = blocks(512, 4)(x)  # 1/32
+    x = blocks(128, 3)(x)  # 1/4
+    x = blocks(256, 3)(x)  # 1/8
+    x = blocks(512, 3)(x)  # 1/16
+    x = blocks(512, 3)(x)  # 1/32
     x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(
-        num_classes,
+        params["num_classes"],
         kernel_initializer="zeros",
         kernel_regularizer=tf.keras.regularizers.l2(1e-4),
     )(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    learning_rate = 1e-3 * batch_size * tk.hvd.size() * app.num_replicas_in_sync
-    optimizer = tf.keras.optimizers.SGD(
-        learning_rate=learning_rate, momentum=0.9, nesterov=True
+    global_batch_size = params["batch_size"] * app.num_workers
+    schedule = tk.schedules.CosineAnnealing(
+        initial_learning_rate=params["base_lr"] * global_batch_size,
+        decay_steps=-(-train_size // global_batch_size) * params["epochs"],
     )
-
-    def loss(y_true, logits):
-        return tk.losses.categorical_crossentropy(
-            y_true, logits, from_logits=True, label_smoothing=0.2
-        )
+    optimizer = tf.keras.optimizers.SGD(
+        learning_rate=schedule, momentum=0.9, nesterov=True
+    )
 
     tk.models.compile(model, optimizer, loss, ["acc"])
 
@@ -148,40 +169,52 @@ def create_network():
     return model, prediction_model
 
 
+def loss(y_true, logits):
+    return tk.losses.categorical_crossentropy(
+        y_true, logits, from_logits=True, label_smoothing=0.2
+    )
+
+
 class MyDataLoader(tk.data.DataLoader):
     def __init__(self, mode):
-        super().__init__(
-            batch_size=batch_size, data_per_sample=2 if mode == "train" else 1,
-        )
+        super().__init__(batch_size=params["batch_size"])
         self.mode = mode
         self.aug2: typing.Any = None
-        if self.mode == "train":
+        if self.mode == "training":
             self.aug1 = A.Compose(
                 [
                     tk.image.RandomTransform(
-                        size=train_shape[:2],
-                        base_scale=predict_shape[0] / train_shape[0],
+                        size=params["train_shape"][:2],
+                        base_scale=params["predict_shape"][0]
+                        / params["train_shape"][0],
                     ),
                     tk.image.RandomColorAugmentors(noisy=True),
                 ]
             )
             self.aug2 = tk.image.RandomErasing()
-        elif self.mode == "refine":
-            self.aug1 = tk.image.RandomTransform.create_refine(size=predict_shape[:2])
+            self.data_per_sample = 2  # mixup
+        elif self.mode == "refining":
+            self.aug1 = tk.image.RandomTransform.create_refine(
+                size=params["predict_shape"][:2]
+            )
             self.aug2 = None
         else:
-            self.aug1 = tk.image.Resize(size=predict_shape[:2])
+            self.aug1 = tk.image.Resize(size=params["predict_shape"][:2])
             self.aug2 = None
 
     def get_data(self, dataset: tk.data.Dataset, index: int):
         X, y = dataset.get_data(index)
         X = tk.ndimage.load(X)
         X = self.aug1(image=X)["image"]
-        y = tf.keras.utils.to_categorical(y, num_classes) if y is not None else None
+        y = (
+            tf.keras.utils.to_categorical(y, params["num_classes"])
+            if y is not None
+            else None
+        )
         return X, y
 
     def get_sample(self, data):
-        if self.mode == "train":
+        if len(data) == 2:
             sample1, sample2 = data
             X, y = tk.ndimage.mixup(sample1, sample2, mode="beta")
             X = self.aug2(image=X)["image"]

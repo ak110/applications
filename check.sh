@@ -1,21 +1,21 @@
 #!/bin/bash
 set -eux
 
-black ./*.py pytoolkit
+black ./*.py pytoolkit.git/pytoolkit
 
-flake8 ./*.py pytoolkit
+flake8 ./*.py pytoolkit.git/pytoolkit
 
-mypy ./*.py pytoolkit
+mypy ./*.py pytoolkit.git/pytoolkit
 
-pushd pytoolkit/docs/
+pushd pytoolkit.git/docs/
 ./update.sh
 make html
 popd
 
-#pyright ./*.py pytoolkit
+#pyright ./*.py pytoolkit.git/pytoolkit
 
-pylint --rcfile=pytoolkit/.pylintrc -j4 ./*.py pytoolkit
+pylint --rcfile=pytoolkit.git/.pylintrc -j4 ./*.py pytoolkit.git/pytoolkit
 
-pushd pytoolkit/
+pushd pytoolkit.git
 pytest
 popd

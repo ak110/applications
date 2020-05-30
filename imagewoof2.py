@@ -136,6 +136,7 @@ def create_network():
     x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(
         num_classes,
+        use_bias=False,
         kernel_initializer="zeros",
         kernel_regularizer=tf.keras.regularizers.l2(1e-4),
     )(x)

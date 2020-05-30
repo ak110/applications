@@ -4,7 +4,7 @@
 train: 25250 -> 250+10*9 = 340 samples
 val: 75750 samples
 
-val_acc:     0.577
+val_acc:     0.582
 
 """
 import pathlib
@@ -20,6 +20,8 @@ num_classes = 10
 train_shape = (256, 256, 3)
 predict_shape = (256, 256, 3)
 batch_size = 16
+epochs = 1800
+base_lr = 3e-5
 data_dir = pathlib.Path("data/food-101")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
 app = tk.cli.App(output_dir=models_dir)
@@ -28,21 +30,21 @@ logger = tk.log.get(__name__)
 
 @app.command(logfile=False)
 def check():
-    create_model().check(load_data()[0].slice(list(range(10))))
+    create_model(100).check(load_data()[0].slice(list(range(10))))
 
 
 @app.command(use_horovod=True)
 def train():
     train_set, val_set = load_data()
-    model = create_model()
+    model = create_model(len(train_set))
     evals = model.train(train_set, val_set)
     tk.notifications.post_evals(evals)
 
 
 @app.command(use_horovod=True)
 def validate():
-    _, val_set = load_data()
-    model = create_model().load()
+    train_set, val_set = load_data()
+    model = create_model(len(train_set)).load()
     pred = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
         tk.evaluations.print_classification_metrics(val_set.labels, pred)
@@ -70,36 +72,46 @@ def load_data():
     return train_set, val_set
 
 
-def create_model():
+def create_model(train_size):
     return tk.pipeline.KerasModel(
-        create_network_fn=create_network,
+        create_network_fn=lambda: create_network(train_size),
         score_fn=tk.evaluations.evaluate_classification,
         nfold=1,
         train_data_loader=MyDataLoader(data_augmentation=True),
         val_data_loader=MyDataLoader(),
-        epochs=1000,
-        callbacks=[tk.callbacks.CosineAnnealing()],
+        epochs=epochs,
+        # callbacks=[tk.callbacks.CosineAnnealing()],
         models_dir=models_dir,
         model_name_format="model.h5",
         skip_if_exists=False,
     )
 
 
-def create_network():
+def create_network(train_size):
     inputs = x = tf.keras.layers.Input((None, None, 3))
     backbone = tk.applications.efficientnet.create_b3(input_tensor=x)
     x = backbone.output
     x = tk.layers.GeMPooling2D()(x)
-    x = tf.keras.layers.Dense(num_classes, kernel_initializer="zeros")(x)
+    x = tf.keras.layers.Dense(
+        num_classes,
+        kernel_initializer="zeros",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+    )(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
-    base_lr = 1e-4 * batch_size * tk.hvd.size()
+    global_batch_size = batch_size * tk.hvd.size() * app.num_replicas_in_sync
+    learning_rate = tk.schedules.ExponentialDecay(
+        initial_learning_rate=base_lr * global_batch_size,
+        decay_steps=-(-train_size // global_batch_size) * epochs,
+    )
     optimizer = tf.keras.optimizers.SGD(
-        learning_rate=base_lr, momentum=0.9, nesterov=True
+        learning_rate=learning_rate, momentum=0.9, nesterov=True
     )
 
     def loss(y_true, logits):
-        return tk.losses.categorical_focal_loss(y_true, logits, from_logits=True)
+        return tk.losses.categorical_crossentropy(
+            y_true, logits, from_logits=True, label_smoothing=0.2
+        )
 
     tk.models.compile(model, optimizer, loss, ["acc"])
 
