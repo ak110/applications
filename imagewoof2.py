@@ -53,7 +53,7 @@ def validate(model=None):
     model = create_model().load()
     pred = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
-        tk.evaluations.print_classification_metrics(val_set.labels, pred)
+        tk.evaluations.print_classification(val_set.labels, pred)
 
 
 def load_data():

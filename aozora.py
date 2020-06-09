@@ -50,7 +50,7 @@ def train():
     model.train(train_set, val_set)
     pred = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
-        evals = tk.evaluations.print_classification_metrics(val_set.labels, pred)
+        evals = tk.evaluations.print_classification(val_set.labels, pred)
         tk.notifications.post_evals(evals)
 
 
@@ -59,7 +59,7 @@ def validate():
     _, val_set = load_data()
     model = create_model().load()
     pred = model.predict(val_set, fold=0)
-    tk.evaluations.print_classification_metrics(val_set.labels, pred)
+    tk.evaluations.print_classification(val_set.labels, pred)
 
 
 def load_data():

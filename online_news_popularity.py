@@ -45,7 +45,7 @@ def train():
     evals = model.train(train_set, val_set)
     pred = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
-        evals = tk.evaluations.print_regression_metrics(val_set.labels, pred)
+        evals = tk.evaluations.print_regression(val_set.labels, pred)
         tk.notifications.post_evals(evals)
 
 
@@ -55,7 +55,7 @@ def validate(model=None):
     model = create_model().load()
     pred = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
-        tk.evaluations.print_regression_metrics(val_set.labels, pred)
+        tk.evaluations.print_regression(val_set.labels, pred)
 
 
 def load_data():

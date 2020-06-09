@@ -62,7 +62,7 @@ def predict():
 def _evaluate(model, val_set):
     pred_val = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
-        evals = tk.evaluations.print_ss_metrics(val_set.labels / 255, pred_val, 0.5)
+        evals = tk.evaluations.print_ss(val_set.labels / 255, pred_val, 0.5)
         tk.notifications.post_evals(evals)
     tk.hvd.barrier()
 

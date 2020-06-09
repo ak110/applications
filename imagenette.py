@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。(trainとvalをひっくり返している。)
 
-val_loss: 1.883
-val_acc:  0.879
+Accuracy:  0.877 (Error: 0.123)
+F1-score:  0.875
+AUC:       0.986
+AP:        0.934
+Precision: 0.876
+Recall:    0.875
+Logloss:   0.839
 
 """
 import functools
@@ -21,6 +26,7 @@ params: typing.Dict[str, typing.Any] = {
     "base_lr": 1e-3,
     "batch_size": 16,
     "epochs": 1800,
+    "refine_epochs": 0,
 }
 data_dir = pathlib.Path("data/imagenette")
 models_dir = pathlib.Path(f"models/{pathlib.Path(__file__).stem}")
@@ -80,7 +86,8 @@ def validate(prediction_model=None):
     pred = tk.models.predict(
         prediction_model, MyDataLoader(mode="predict").load(validation_set)
     )
-    tk.evaluations.print_classification_metrics(validation_set.labels, pred)
+    evals = tk.evaluations.evaluate_classification(validation_set.labels, pred)
+    tk.notifications.post_evals(evals)
 
 
 def load_data():

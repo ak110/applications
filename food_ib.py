@@ -47,7 +47,7 @@ def validate():
     model = create_model(len(train_set)).load()
     pred = model.predict(val_set, fold=0)
     if tk.hvd.is_master():
-        tk.evaluations.print_classification_metrics(val_set.labels, pred)
+        tk.evaluations.print_classification(val_set.labels, pred)
 
 
 @tk.cache.memoize("cache___", prefix="food_ib")

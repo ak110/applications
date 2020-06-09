@@ -48,7 +48,7 @@ def validate():
 def _evaluate(model, val_set):
     if tk.hvd.is_master():
         pred_val = model.predict_flow(val_set)
-        evals = tk.evaluations.print_ss_metrics(flow_labels(val_set), pred_val, 0.5)
+        evals = tk.evaluations.print_ss(flow_labels(val_set), pred_val, 0.5)
         tk.notifications.post_evals(evals)
     tk.hvd.barrier()
 
