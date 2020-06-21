@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """imagenetteの実験用コード。(trainとvalをひっくり返している。)
 
-Accuracy:  0.877 (Error: 0.123)
-F1-score:  0.875
-AUC:       0.986
-AP:        0.934
-Precision: 0.876
-Recall:    0.875
-Logloss:   0.839
+acc:     0.880
+error:   0.120
+f1:      0.877
+auc:     0.986
+ap:      0.935
+prec:    0.878
+rec:     0.878
+mcc:     0.866
+logloss: 0.863
 
 """
 import functools
@@ -36,57 +38,61 @@ logger = tk.log.get(__name__)
 
 @app.command(logfile=False)
 def check():
-    checking_set = load_data()[0].slice(range(16))
-    training_model, prediction_model = create_network(len(checking_set))
+    check_set = load_data()[0].slice(range(16))
+    train_model, pred_model = create_network(len(check_set))
     tk.models.check(
-        training_model=training_model,
-        prediction_model=prediction_model,
+        train_model=train_model,
+        pred_model=pred_model,
         models_dir=models_dir,
-        dataset=checking_set,
-        training_data_loader=MyDataLoader(mode="training"),
-        prediction_data_loader=MyDataLoader(mode="prediction"),
+        dataset=check_set,
+        train_data_loader=MyDataLoader(mode="training"),
+        pred_data_loader=MyDataLoader(mode="prediction"),
         save_mode="hdf5",
     )
 
 
 @app.command()
 def train():
-    training_set, validation_set = load_data()
-    training_model, prediction_model = create_network(len(training_set))
+    train_set, val_set = load_data()
+    train_model, pred_model = create_network(len(train_set))
     tk.models.fit(
-        training_model,
-        training_iterator=MyDataLoader(mode="training").load(training_set),
-        validation_iterator=MyDataLoader(mode="prediction").load(validation_set),
+        train_model,
+        train_iterator=MyDataLoader(mode="training").load(train_set),
+        val_iterator=MyDataLoader(mode="prediction").load(val_set),
         epochs=params["epochs"],
     )
-    tk.models.save(prediction_model, models_dir / "model.h5")
+    tk.models.save(pred_model, models_dir / "model.h5")
     if params["refine_epochs"] > 0:
-        tk.models.freeze_layers(training_model, tf.keras.layers.BatchNormalization)
+        tk.models.freeze_layers(train_model, tf.keras.layers.BatchNormalization)
         optimizer = tf.keras.optimizers.SGD(
             learning_rate=params["base_lr"] * app.num_workers,
             momentum=0.9,
             nesterov=True,
         )
-        tk.models.compile(training_model, optimizer, loss, ["acc"])
+        tk.models.compile(
+            train_model,
+            optimizer,
+            loss,
+            ["acc", tk.metrics.CosineSimilarity(from_logits=True)],
+        )
         tk.models.fit(
-            training_model,
-            training_iterator=MyDataLoader(mode="refining").load(training_set),
-            validation_iterator=MyDataLoader(mode="prediction").load(validation_set),
+            train_model,
+            train_iterator=MyDataLoader(mode="refining").load(train_set),
+            val_iterator=MyDataLoader(mode="prediction").load(val_set),
             epochs=params["refine_epochs"],
         )
-        tk.models.save(prediction_model, models_dir / "model.h5")
-    validate(prediction_model)
+        tk.models.save(pred_model, models_dir / "model.h5")
+    validate(pred_model)
 
 
 @app.command()
-def validate(prediction_model=None):
-    training_set, validation_set = load_data()
-    prediction_model = prediction_model or create_network(len(training_set))[1]
-    tk.models.load_weights(prediction_model, models_dir / "model.h5")
-    pred = tk.models.predict(
-        prediction_model, MyDataLoader(mode="predict").load(validation_set)
-    )
-    evals = tk.evaluations.evaluate_classification(validation_set.labels, pred)
+def validate(pred_model=None):
+    train_set, val_set = load_data()
+    if pred_model is None:
+        _, pred_model = create_network(len(train_set))
+        tk.models.load_weights(pred_model, models_dir / "model.h5")
+    pred = tk.models.predict(pred_model, MyDataLoader(mode="predict").load(val_set))
+    evals = tk.evaluations.evaluate_classification(val_set.labels, pred)
     tk.notifications.post_evals(evals)
 
 
@@ -158,7 +164,7 @@ def create_network(train_size):
         kernel_initializer="zeros",
         kernel_regularizer=tf.keras.regularizers.l2(1e-4),
     )(x)
-    model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    train_model = tf.keras.models.Model(inputs=inputs, outputs=x)
 
     global_batch_size = params["batch_size"] * app.num_workers
     schedule = tk.schedules.CosineAnnealing(
@@ -169,11 +175,16 @@ def create_network(train_size):
         learning_rate=schedule, momentum=0.9, nesterov=True
     )
 
-    tk.models.compile(model, optimizer, loss, ["acc"])
+    tk.models.compile(
+        train_model,
+        optimizer,
+        loss,
+        ["acc", tk.metrics.CosineSimilarity(from_logits=True)],
+    )
 
     x = tf.keras.layers.Activation("softmax")(x)
-    prediction_model = tf.keras.models.Model(inputs=inputs, outputs=x)
-    return model, prediction_model
+    pred_model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    return train_model, pred_model
 
 
 def loss(y_true, logits):

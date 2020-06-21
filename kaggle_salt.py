@@ -199,8 +199,8 @@ def create_network():
     )
 
     x = tf.keras.layers.Activation("sigmoid")(x)
-    prediction_model = tf.keras.models.Model(inputs=inputs, outputs=x)
-    return model, prediction_model
+    pred_model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    return model, pred_model
 
 
 class MyDataLoader(tk.data.DataLoader):

@@ -116,9 +116,9 @@ def create_network(train_size):
     tk.models.compile(model, optimizer, loss, ["acc"])
 
     x = tf.keras.layers.Activation(activation="softmax")(x)
-    prediction_model = tf.keras.models.Model(inputs=inputs, outputs=x)
-    tk.models.compile(prediction_model, optimizer, loss, ["acc"])
-    return model, prediction_model
+    pred_model = tf.keras.models.Model(inputs=inputs, outputs=x)
+    tk.models.compile(pred_model, optimizer, loss, ["acc"])
+    return model, pred_model
 
 
 class MyDataLoader(tk.data.DataLoader):
