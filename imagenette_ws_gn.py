@@ -69,20 +69,18 @@ def create_model():
 
 
 def create_network():
-    def conv2d(*args, **kwargs):
-        return tfa.layers.WeightNormalization(
-            functools.partial(
-                tf.keras.layers.Conv2D,
-                kernel_size=3,
-                padding="same",
-                use_bias=False,
-                kernel_initializer="he_uniform",
-                kernel_regularizer=tf.keras.regularizers.l2(1e-4),
-            )(*args, **kwargs)
-        )
-
+    conv2d = functools.partial(
+        tk.layers.WSConv2D,
+        kernel_size=3,
+        padding="same",
+        use_bias=False,
+        kernel_initializer="he_uniform",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+    )
     bn = functools.partial(
-        tfa.layers.GroupNormalization, gamma_regularizer=tf.keras.regularizers.l2(1e-4),
+        tfa.layers.GroupNormalization,
+        groups=32,
+        gamma_regularizer=tf.keras.regularizers.l2(1e-4),
     )
     act = functools.partial(tf.keras.layers.Activation, "relu")
 
@@ -123,14 +121,7 @@ def create_network():
         return layers
 
     inputs = x = tf.keras.layers.Input((None, None, 3))
-    x = tf.keras.layers.concatenate(
-        [
-            conv2d(16, kernel_size=2, strides=2)(x),
-            conv2d(16, kernel_size=4, strides=2)(x),
-            conv2d(16, kernel_size=6, strides=2)(x),
-            conv2d(16, kernel_size=8, strides=2)(x),
-        ]
-    )  # 1/2
+    x = conv2d(64, kernel_size=6, strides=2)(x)  # 1/2
     x = bn()(x)
     x = act()(x)
     x = blocks(128, 4)(x)  # 1/4

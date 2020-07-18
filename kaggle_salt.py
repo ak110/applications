@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """TGS Salt Identification Challengeの実験用コード。
 
-Private: 0.87401
-Public:  0.85624
-
-iou:       [0.96  0.875]
-miou:      0.917
-iou_score: 0.871
+iou:       [0.961 0.88 ]
+miou:      0.921
+iou_score: 0.866
 dice:      0.521
-fg_iou:    0.851
+fg_iou:    0.847
 bg_acc:    0.954
-acc:       0.969
+acc:       0.970
 
 """
 import functools
