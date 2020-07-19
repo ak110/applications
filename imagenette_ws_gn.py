@@ -3,8 +3,8 @@
 
 Weight Standalization + GroupNormalization。重いので普段は使わない。
 
-val_loss: 1.410
-val_acc:  0.839
+val_loss: 1.826
+val_acc:  0.855
 
 """
 import functools
