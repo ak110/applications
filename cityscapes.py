@@ -82,7 +82,8 @@ def create_network():
         kernel_regularizer=tf.keras.regularizers.l2(1e-4),
     )
     bn = functools.partial(
-        tk.layers.GroupNormalization, gamma_regularizer=tf.keras.regularizers.l2(1e-4),
+        tk.layers.GroupNormalization,
+        gamma_regularizer=tf.keras.regularizers.l2(1e-4),
     )
     act = functools.partial(tf.keras.layers.Activation, "relu")
 
