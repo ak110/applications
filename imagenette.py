@@ -36,6 +36,9 @@ app = tk.cli.App(output_dir=models_dir, use_horovod=True)
 logger = tk.log.get(__name__)
 
 
+# tf.keras.mixed_precision.set_global_policy("mixed_float16")
+
+
 @app.command(logfile=False)
 def check():
     check_set = load_data()[0].slice(range(16))
