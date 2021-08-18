@@ -51,13 +51,3 @@ repos:
         exclude: ^pytoolkit
         require_serial: true
         language: system
-
-  - repo: local
-    hooks:
-      - id: system
-        name: mypy
-        entry: mypy
-        types: [python]
-        exclude: ^pytoolkit
-        require_serial: true
-        language: system

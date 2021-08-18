@@ -11,8 +11,8 @@
 
 ## 実行結果 (256px/80epochs, LB: 90.48%)
 
-val_loss: 2.0723
-val_acc:  0.9056
+val_loss: 2.0909
+val_acc:  0.9059
 
 """
 import functools

@@ -68,7 +68,7 @@ def train():
     if params["refine_epochs"] > 0:
         tk.models.freeze_layers(train_model, tf.keras.layers.BatchNormalization)
         optimizer = tf.keras.optimizers.SGD(
-            learning_rate=params["base_lr"] * app.num_workers,
+            learning_rate=params["base_lr"] / 100 * app.num_workers,
             momentum=0.9,
             nesterov=True,
         )

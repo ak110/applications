@@ -1,5 +1,7 @@
 [MASTER]
 extension-pkg-whitelist=numpy,cv2
+# workaround: https://github.com/PyCQA/pylint/issues/3836
+init-hook='import sys; sys.setrecursionlimit(3 * sys.getrecursionlimit())'
 
 [MESSAGES CONTROL]
 disable=
