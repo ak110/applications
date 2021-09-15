@@ -11,8 +11,8 @@
 
 ## 実行結果 (256px/80epochs, LB: 90.48%)
 
-val_loss: 2.0909
-val_acc:  0.9059
+val_loss: 1.9089
+val_acc:  0.8997
 
 """
 import functools
@@ -21,6 +21,7 @@ import typing
 
 import albumentations as A
 import tensorflow as tf
+import tensorflow_addons as tfa
 
 import pytoolkit as tk
 
@@ -84,8 +85,16 @@ def create_network():
         kernel_initializer="he_uniform",
         kernel_regularizer=tf.keras.regularizers.l2(1e-4),
     )
-    bn = functools.partial(
-        tf.keras.layers.BatchNormalization,
+    wsconv2d = functools.partial(
+        tk.layers.WSConv2D,
+        kernel_size=3,
+        padding="same",
+        use_bias=False,
+        kernel_initializer="he_uniform",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+    )
+    gn = functools.partial(
+        tfa.layers.GroupNormalization,
         gamma_regularizer=tf.keras.regularizers.l2(1e-4),
     )
     act = functools.partial(tf.keras.layers.Activation, "relu")
@@ -94,44 +103,38 @@ def create_network():
         def layers(x):
             if down:
                 in_filters = x.shape[-1]
-                g = conv2d(in_filters)(x)
-                g = bn()(g)
+                g = wsconv2d(in_filters)(x)
+                g = gn()(g)
                 g = act()(g)
                 g = conv2d(in_filters, use_bias=True, activation="sigmoid")(g)
                 x = tf.keras.layers.multiply([x, g])
                 x = tf.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
                 x = tk.layers.BlurPooling2D(taps=4)(x)
-                x = conv2d(filters)(x)
-                x = bn()(x)
+                x = wsconv2d(filters)(x)
+                x = gn()(x)
             for _ in range(count):
                 sc = x
-                x = conv2d(filters)(x)
-                x = bn()(x)
+                x = wsconv2d(filters)(x)
+                x = gn()(x)
                 x = act()(x)
-                x = conv2d(filters)(x)
+                x = wsconv2d(filters)(x)
                 # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
-                x = bn(gamma_initializer="zeros")(x)
+                x = gn(gamma_initializer="zeros")(x)
                 x = tf.keras.layers.add([sc, x])
-            x = bn()(x)
+            x = gn()(x)
             x = act()(x)
             return x
 
         return layers
 
     inputs = x = tf.keras.layers.Input(input_shape)
-    x = tf.keras.layers.concatenate(
-        [
-            conv2d(16, kernel_size=2, strides=2)(x),
-            conv2d(16, kernel_size=4, strides=2)(x),
-            conv2d(16, kernel_size=6, strides=2)(x),
-            conv2d(16, kernel_size=8, strides=2)(x),
-        ]
-    )  # 1/2
-    x = bn()(x)
+    x = wsconv2d(64, kernel_size=6, strides=2)(x)  # 1/2
+    x = gn()(x)
     x = act()(x)
     x = blocks(128, 3)(x)  # 1/4
     x = blocks(256, 3)(x)  # 1/8
-    x = blocks(512, 12)(x)  # 1/16
+    x = blocks(512, 3)(x)  # 1/16
+    x = blocks(512, 3)(x)  # 1/32
     x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(
         num_classes,
