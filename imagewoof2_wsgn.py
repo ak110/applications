@@ -11,8 +11,8 @@
 
 ## 実行結果 (256px/80epochs, LB: 90.48%)
 
-val_loss: 1.9089
-val_acc:  0.8997
+val_loss: 1.9057
+val_acc:  0.9031
 
 """
 import functools
@@ -25,7 +25,6 @@ import tensorflow_addons as tfa
 
 import pytoolkit as tk
 
-runs = 5
 num_classes = 10
 input_shape = (256, 256, 3)
 batch_size = 16
@@ -41,7 +40,12 @@ def check():
 
 
 @app.command(use_horovod=True)
-def train():
+def train_once():
+    train(runs=1)
+
+
+@app.command(use_horovod=True)
+def train(runs=5):
     train_set, val_set = load_data()
     evals_list = [create_model().train(train_set, val_set) for _ in range(runs)]
     evals = tk.evaluations.mean(evals_list)
@@ -99,37 +103,48 @@ def create_network():
     )
     act = functools.partial(tf.keras.layers.Activation, "relu")
 
+    channels_per_group = 16
+
     def blocks(filters, count, down=True):
         def layers(x):
             if down:
                 in_filters = x.shape[-1]
                 g = wsconv2d(in_filters)(x)
-                g = gn()(g)
+                g = gn(groups=in_filters // channels_per_group)(g)
                 g = act()(g)
                 g = conv2d(in_filters, use_bias=True, activation="sigmoid")(g)
                 x = tf.keras.layers.multiply([x, g])
                 x = tf.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
                 x = tk.layers.BlurPooling2D(taps=4)(x)
                 x = wsconv2d(filters)(x)
-                x = gn()(x)
+                x = gn(groups=filters // channels_per_group)(x)
             for _ in range(count):
                 sc = x
                 x = wsconv2d(filters)(x)
-                x = gn()(x)
+                x = gn(groups=filters // channels_per_group)(x)
                 x = act()(x)
                 x = wsconv2d(filters)(x)
                 # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
-                x = gn(gamma_initializer="zeros")(x)
+                x = gn(groups=filters // channels_per_group, gamma_initializer="zeros")(
+                    x
+                )
                 x = tf.keras.layers.add([sc, x])
-            x = gn()(x)
+            x = gn(groups=filters // channels_per_group)(x)
             x = act()(x)
             return x
 
         return layers
 
     inputs = x = tf.keras.layers.Input(input_shape)
-    x = wsconv2d(64, kernel_size=6, strides=2)(x)  # 1/2
-    x = gn()(x)
+    x = tf.keras.layers.concatenate(
+        [
+            wsconv2d(16, kernel_size=2, strides=2)(x),
+            wsconv2d(16, kernel_size=4, strides=2)(x),
+            wsconv2d(16, kernel_size=6, strides=2)(x),
+            wsconv2d(16, kernel_size=8, strides=2)(x),
+        ]
+    )  # 1/2
+    x = gn(groups=16 * 4 // channels_per_group)(x)
     x = act()(x)
     x = blocks(128, 3)(x)  # 1/4
     x = blocks(256, 3)(x)  # 1/8

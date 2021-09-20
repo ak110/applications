@@ -11,8 +11,15 @@
 
 ## 実行結果 (LB: 128px/20epochs, 79.36%)
 
-val_loss: 2.1101
-val_acc:  0.7661
+acc:     0.756
+error:   0.244
+f1:      0.751
+auc:     0.966
+ap:      0.857
+prec:    0.783
+rec:     0.756
+mcc:     0.733
+logloss: 1.184
 
 """
 from __future__ import annotations
@@ -239,7 +246,7 @@ class MyDataLoader(tk.data.DataLoader):
                         base_scale=params["predict_shape"][0]
                         / params["train_shape"][0],
                     ),
-                    tk.image.RandomColorAugmentors(noisy=True),
+                    tk.image.RandomColorAugmentors(noisy=False),
                 ]
             )
             self.aug2 = tk.image.RandomErasing()
@@ -298,9 +305,7 @@ class MyDataLoader(tk.data.DataLoader):
             assert app.temp_dir is not None
             ds = ds.cache(str(app.temp_dir / f"{self.mode}.cache"))
             ds = ds.shuffle(buffer_size=len(X)) if shuffle else ds
-            ds = ds.map(
-                process2, num_parallel_calls=tf.data.AUTOTUNE, deterministic=not shuffle
-            )
+            ds = ds.map(process2)
         else:
             ds = ds.shuffle(buffer_size=len(X)) if shuffle else ds
             ds = ds.map(

@@ -24,7 +24,6 @@ import tensorflow as tf
 
 import pytoolkit as tk
 
-runs = 5
 num_classes = 10
 input_shape = (256, 256, 3)
 batch_size = 16
@@ -40,7 +39,12 @@ def check():
 
 
 @app.command(use_horovod=True)
-def train():
+def train_once():
+    train(runs=1)
+
+
+@app.command(use_horovod=True)
+def train(runs=5):
     train_set, val_set = load_data()
     evals_list = [create_model().train(train_set, val_set) for _ in range(runs)]
     evals = tk.evaluations.mean(evals_list)
@@ -131,7 +135,8 @@ def create_network():
     x = act()(x)
     x = blocks(128, 3)(x)  # 1/4
     x = blocks(256, 3)(x)  # 1/8
-    x = blocks(512, 12)(x)  # 1/16
+    x = blocks(512, 3)(x)  # 1/16
+    x = blocks(512, 3)(x)  # 1/32
     x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(
         num_classes,
