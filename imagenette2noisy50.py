@@ -11,15 +11,15 @@
 
 ## 実行結果 (LB: 128px/20epochs, 79.36%)
 
-acc:     0.756
-error:   0.244
-f1:      0.751
-auc:     0.966
-ap:      0.857
-prec:    0.783
-rec:     0.756
-mcc:     0.733
-logloss: 1.184
+acc:     0.777
+error:   0.223
+f1:      0.774
+auc:     0.967
+ap:      0.858
+prec:    0.786
+rec:     0.778
+mcc:     0.754
+logloss: 1.181
 
 """
 from __future__ import annotations
@@ -305,7 +305,9 @@ class MyDataLoader(tk.data.DataLoader):
             assert app.temp_dir is not None
             ds = ds.cache(str(app.temp_dir / f"{self.mode}.cache"))
             ds = ds.shuffle(buffer_size=len(X)) if shuffle else ds
-            ds = ds.map(process2)
+            ds = ds.map(
+                process2, num_parallel_calls=tf.data.AUTOTUNE, deterministic=not shuffle
+            )
         else:
             ds = ds.shuffle(buffer_size=len(X)) if shuffle else ds
             ds = ds.map(
