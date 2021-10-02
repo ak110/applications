@@ -11,8 +11,8 @@
 
 ## 実行結果 (256px/80epochs, LB: 90.48%)
 
-val_loss: 1.9082
-val_acc:  0.9056
+val_loss: 1.5844
+val_acc:  0.9062
 
 """
 import functools
@@ -94,7 +94,7 @@ def create_network():
     )
     act = functools.partial(tf.keras.layers.Activation, "relu")
 
-    def blocks(filters, count, down=True):
+    def blocks(filters, down=True):
         def layers(x):
             if down:
                 in_filters = x.shape[-1]
@@ -105,17 +105,10 @@ def create_network():
                 x = tf.keras.layers.multiply([x, g])
                 x = tf.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
                 x = tk.layers.BlurPooling2D(taps=4)(x)
-                x = conv2d(filters)(x)
-                x = bn()(x)
-            for _ in range(count):
-                sc = x
-                x = conv2d(filters)(x)
-                x = bn()(x)
-                x = act()(x)
-                x = conv2d(filters)(x)
-                # resblockのadd前だけgammaの初期値を0にする。 <https://arxiv.org/abs/1812.01187>
-                x = bn(gamma_initializer="zeros")(x)
-                x = tf.keras.layers.add([sc, x])
+            x = conv2d(filters * 2)(x)
+            x = bn()(x)
+            x = act()(x)
+            x = conv2d(filters)(x)
             x = bn()(x)
             x = act()(x)
             return x
@@ -133,10 +126,10 @@ def create_network():
     )  # 1/2
     x = bn()(x)
     x = act()(x)
-    x = blocks(128, 3)(x)  # 1/4
-    x = blocks(256, 3)(x)  # 1/8
-    x = blocks(512, 3)(x)  # 1/16
-    x = blocks(512, 3)(x)  # 1/32
+    x = blocks(128)(x)  # 1/4
+    x = blocks(256)(x)  # 1/8
+    x = blocks(512)(x)  # 1/16
+    x = blocks(512)(x)  # 1/32
     x = tk.layers.GeMPooling2D()(x)
     x = tf.keras.layers.Dense(
         num_classes,
