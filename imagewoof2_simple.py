@@ -14,8 +14,8 @@ residual connectionすら要らなそう…。
 
 ## 実行結果 (256px/80epochs, LB: 90.48%)
 
-val_loss: 1.5613
-val_acc:  0.9055
+val_loss: 1.6624
+val_acc:  0.9083
 
 """
 import functools
@@ -97,12 +97,8 @@ def create_network():
     )
     act = functools.partial(tf.keras.layers.Activation, "relu")
 
-    def blocks(filters, scale=2, down=True):
+    def blocks(filters, scale=4, down=True):
         def layers(x):
-            # ダウンサンプリング前にフィルタ数を増やす
-            x = conv2d(filters)(x)
-            x = bn()(x)
-            x = act()(x)
             if down:
                 # MaxBlurPool
                 x = tf.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
@@ -128,6 +124,9 @@ def create_network():
             conv2d(16, kernel_size=8, strides=2)(x),
         ]
     )  # 1/2
+    x = bn()(x)
+    x = act()(x)
+    x = conv2d(64)(x)
     x = bn()(x)
     x = act()(x)
     x = blocks(128)(x)  # 1/4
