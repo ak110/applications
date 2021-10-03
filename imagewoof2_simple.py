@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """imagewoofの実験用コード。
 
+どこまでシンプルにできるか試してみるバージョン。
+residual connectionすら要らなそう…。
+
 <https://github.com/fastai/imagenette#imagewoof-leaderboard>
 
 ## レギュレーション
