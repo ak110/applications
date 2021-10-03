@@ -14,8 +14,8 @@ residual connectionすら要らなそう…。
 
 ## 実行結果 (256px/80epochs, LB: 90.48%)
 
-val_loss: 1.5844
-val_acc:  0.9062
+val_loss: 1.5613
+val_acc:  0.9055
 
 """
 import functools
@@ -97,18 +97,19 @@ def create_network():
     )
     act = functools.partial(tf.keras.layers.Activation, "relu")
 
-    def blocks(filters, down=True):
+    def blocks(filters, scale=2, down=True):
         def layers(x):
+            # ダウンサンプリング前にフィルタ数を増やす
+            x = conv2d(filters)(x)
+            x = bn()(x)
+            x = act()(x)
             if down:
-                in_filters = x.shape[-1]
-                g = conv2d(in_filters)(x)
-                g = bn()(g)
-                g = act()(g)
-                g = conv2d(in_filters, use_bias=True, activation="sigmoid")(g)
-                x = tf.keras.layers.multiply([x, g])
+                # MaxBlurPool
                 x = tf.keras.layers.MaxPooling2D(3, strides=1, padding="same")(x)
                 x = tk.layers.BlurPooling2D(taps=4)(x)
-            x = conv2d(filters * 2)(x)
+            # 受容野だけ考えるとConv2個くらいでいい気がする。
+            # TransformersのFFNとかinverted residualsとか風に* scaleでパラメータ数稼ぎ。
+            x = conv2d(filters * scale)(x)
             x = bn()(x)
             x = act()(x)
             x = conv2d(filters)(x)
